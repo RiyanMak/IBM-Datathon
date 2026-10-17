@@ -335,6 +335,42 @@ def sort_rings(rings: List[RingView], by: str = "newest") -> List[RingView]:
     return sorted(rings, key=lambda x: (x.last_seen, x.received_ms), reverse=True)
 
 
+def filter_rings(rings: List[RingView], shapes=None, min_score: float = 0.0,
+                 open_only: bool = False, decided=()) -> List[RingView]:
+    """Keep rings whose shape is in `shapes` (all when empty), whose XGBoost score is at
+    least `min_score` (a ring with no score only passes at 0), and, with open_only, that
+    have no decision. Order is kept."""
+    shapes = set(shapes or ())
+    out = []
+    for ring in rings:
+        if shapes and ring.shape not in shapes:
+            continue
+        if min_score > 0 and (ring.xgb_score is None or ring.xgb_score < min_score):
+            continue
+        if open_only and ring.ring_id in decided:
+            continue
+        out.append(ring)
+    return out
+
+
+def detect_upgrades(seen: Dict[str, tuple], cases: Dict[str, CaseView]) -> List[str]:
+    """Ring IDs whose latest case just became a Granite one.
+
+    `seen` maps ring_id -> (version, source) from the previous refresh and is updated
+    in place. A ring seen for the first time is never an upgrade, so opening the page
+    does not fire a burst of notices for cases that were already there.
+    """
+    upgraded = []
+    for ring_id, case in cases.items():
+        before = seen.get(ring_id)
+        if before is not None:
+            old_version, old_source = before
+            if case.is_granite and old_source != "granite" and case.version >= old_version:
+                upgraded.append(ring_id)
+        seen[ring_id] = (case.version, case.source)
+    return sorted(upgraded)
+
+
 def latest_case(r, ring_id: str) -> Optional[CaseView]:
     """The latest case for one ring.
 

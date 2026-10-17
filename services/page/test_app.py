@@ -123,3 +123,71 @@ def test_selecting_another_ring_switches_detail(r):
     at.radio[0].set_value(other).run()
     assert other in at.subheader[0].value
     assert any(other in m.value for m in at.markdown if m.value.startswith("**Your decision"))
+
+
+def test_facts_panel_and_history(r):
+    add_ring(r, "R-1", version=1)
+    add_case(r, "R-1", version=1)
+    add_case(r, "R-1", version=1, source="granite")
+    at = run()
+    assert not at.exception
+    assert any(m.value.startswith("| Fact | Value |") and "1\\_A" in m.value for m in at.markdown)
+    assert [e.label for e in at.expander] == ["Case history (2)"]
+
+
+def test_upgrade_shows_toast_and_highlight(r):
+    import streamlit as st
+    add_ring(r, "R-1")
+    add_case(r, "R-1", source="template")
+    at = run()
+    assert not at.toast and not at.success
+    add_case(r, "R-1", source="granite")
+    st.cache_data.clear()
+    at.run()
+    assert not at.exception
+    assert any("Granite summary arrived for R-1" in t.value for t in at.toast)
+    assert any("arrived just now" in s.value for s in at.success)
+
+
+def test_shape_filter(r):
+    add_ring(r, "R-1")
+    r.xadd(bus.RINGS, {"ring_id": "R-2", "version": "1", "shape": "cycle", "n_accounts": "0",
+                       "accounts": "[]", "edges": "[]", "xgb_score": "0.5", "gnn_score": "",
+                       "reasons": "[]", "first_seen": "", "last_seen": ""})
+    at = run()
+    assert len(at.radio[0].options) == 2
+    at.multiselect(key="shapes").set_value(["cycle"]).run()
+    assert not at.exception
+    assert len(at.radio[0].options) == 1 and "R-2" in at.radio[0].options[0]
+    assert any("Showing 1 of 2 rings" in c.value for c in at.caption)
+    at.slider(key="min_score").set_value(0.8).run()
+    assert any("No rings match" in i.value for i in at.info)
+
+
+def top_bar_values(at):
+    return {m.label: m.value for m in at.metric}
+
+
+def test_top_bar_counts_move(r):
+    add_ring(r, "R-1")
+    add_ring(r, "R-2")
+    r.xadd(bus.DECISIONS, {"ring_id": "R-2", "version": "1", "decision": "dismiss",
+                           "note": "", "decided_at": "2026-10-17T10:00:00+00:00"})
+    for i in range(3):
+        r.xadd(bus.SCORED, {"txn_id": "t%d" % i, "flagged": "1" if i == 0 else "0",
+                            "sent_at": "2026-10-17T10:00:00.000+00:00",
+                            "scored_at": "2026-10-17T10:00:00.004+00:00"})
+    at = run()
+    assert not at.exception
+    v = top_bar_values(at)
+    assert v["Transfers scored"] == "3"
+    assert v["Flagged, last 3"] == "1"
+    assert v["Open rings"] == "1 of 2"
+    assert v["Latency p50"] == "4.0 ms"
+
+    import streamlit as st
+    for i in range(3, 10):
+        r.xadd(bus.SCORED, {"txn_id": "t%d" % i, "flagged": "0"})
+    st.cache_data.clear()
+    at.run()
+    assert top_bar_values(at)["Transfers scored"] == "10"

@@ -20,9 +20,14 @@ When you do one, move it to the "Done" section at the bottom with the date.
 - **`case:<ring_id>` hash.** When the case writer adds it (its plan, C1), change only `state.latest_case()` to read it.
 - **`PageState.to_dict()` leaves out the computed labels** (`shape_label`, `source_label`, decision `label`). The Flask fallback would need them in the JSON. Add them only if the fallback is built.
 
-## Redis connection
+## Times on screen
 
-- **Fast failure when Redis is down.** redis-py retries with backoff by default, so a down Redis can stall each refresh for seconds. Planned for step 4: let `common.bus.connect()` accept connection options, and give the page a short connect timeout.
+- **Case times are local, decision times are UTC.** The case writer writes `written_at` in the machine's local time with no zone, so the case history can read 17:09 while a decision made a minute later reads 22:09 UTC. The page shows case times without a zone rather than mislabel them. Fix in the case writer (its plan, B6: write UTC); the page then shows "UTC" automatically.
+
+## Page layout (`services/page/app.py`)
+
+- **Long facts table.** A ring with every fact present gives about a dozen rows beside the reasons. If it feels long during the demo, show the first five and put the rest in an expander.
+- **Pin demo rings.** Once Pair 1 picks the two or three demo attempts, a "pinned" option at the top of the ring list would keep them in view during a busy replay.
 
 ## Fake feed (`services/page/fake/`)
 
@@ -32,4 +37,5 @@ When you do one, move it to the "Done" section at the bottom with the date.
 
 ## Done
 
-(nothing yet)
+- **Fast failure when Redis is down** (2026-10-17, step 4). `common.bus.connect()` accepts redis options; the page uses a 1 s connect timeout and no retries, and shows a banner.
+- **Dollar amounts garbled as maths** (2026-10-17, step 4). Found on screen: Streamlit read `$...$` as a formula. All data shown through Markdown is escaped by `fmt.md()`.

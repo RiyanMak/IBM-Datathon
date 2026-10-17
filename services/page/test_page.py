@@ -306,3 +306,96 @@ def test_display_formats():
     assert fmt.wall_time("2026-10-17T10:00:00") == "2026-10-17 10:00"     # no zone: none shown
     assert fmt.wall_time("garbage") == "garbage"
     assert fmt.plural(1, "account") == "1 account" and fmt.plural(2, "account") == "2 accounts"
+    assert fmt.count(12345) == "12,345" and fmt.count(None) == fmt.DASH
+    assert fmt.ms(4.96) == "5.0 ms" and fmt.ms(123.4) == "123 ms" and fmt.ms(None) == fmt.DASH
+
+
+def test_filter_rings(r):
+    r.xadd(bus.RINGS, ring_msg("R-1", shape="fan-out", xgb_score="0.9"))
+    r.xadd(bus.RINGS, ring_msg("R-2", shape="cycle", xgb_score="0.6"))
+    r.xadd(bus.RINGS, ring_msg("R-3", shape="cycle", xgb_score=""))
+    rings = state.load(r).rings
+    ids = lambda xs: sorted(x.ring_id for x in xs)
+    assert ids(state.filter_rings(rings)) == ["R-1", "R-2", "R-3"]
+    assert ids(state.filter_rings(rings, shapes=["cycle"])) == ["R-2", "R-3"]
+    assert ids(state.filter_rings(rings, min_score=0.7)) == ["R-1"]
+    assert ids(state.filter_rings(rings, shapes=["cycle"], min_score=0.5)) == ["R-2"]   # no score: out
+    assert ids(state.filter_rings(rings, open_only=True, decided={"R-2": 1})) == ["R-1", "R-3"]
+
+
+def _case(ring_id, version, source):
+    from services.page.models import CaseView
+    return CaseView(ring_id=ring_id, version=version, parts=[], source=source, check_note="",
+                    written_at="", facts=None, received_ms=0)
+
+
+def test_detect_upgrades():
+    seen = {}
+    # First sight is never an upgrade, even for a Granite case.
+    assert state.detect_upgrades(seen, {"R-1": _case("R-1", 1, "template"),
+                                        "R-2": _case("R-2", 1, "granite")}) == []
+    # Nothing changed.
+    assert state.detect_upgrades(seen, {"R-1": _case("R-1", 1, "template")}) == []
+    # Template -> Granite on the same version is an upgrade, reported once.
+    assert state.detect_upgrades(seen, {"R-1": _case("R-1", 1, "granite")}) == ["R-1"]
+    assert state.detect_upgrades(seen, {"R-1": _case("R-1", 1, "granite")}) == []
+    # A new version arriving as template, then its Granite rewrite: one upgrade.
+    assert state.detect_upgrades(seen, {"R-1": _case("R-1", 2, "template")}) == []
+    assert state.detect_upgrades(seen, {"R-1": _case("R-1", 2, "granite")}) == ["R-1"]
+
+
+def test_fact_rows():
+    from services.page import fmt
+    facts = {"ring_id": "R-1", "xgb_score": 0.9, "total_usd": 5, "collector": None,
+             "passed_on_pct": 98, "key_account": "10_X", "hours_to_pass_on": 0.7,
+             "key_received_usd": 10000, "edges": [1, 2], "new_signal_hours": 2, "mule_risk": 0.25}
+    assert fmt.fact_rows(facts) == [
+        ("Key account", "10_X"),
+        ("Key account received", "$10,000"),
+        ("Share passed on", "98%"),
+        ("Began passing on after", "0.7 h"),
+        ("Mule risk", "0.25"),            # unknown keys follow, readable label
+        ("New signal hours", "2.0 h"),
+    ]
+    assert fmt.fact_rows(None) == [] and fmt.fact_rows({}) == []
+
+
+def _tiles(counters):
+    from services.page import fmt
+    return {t.label: t for t in fmt.top_bar(counters)}
+
+
+def test_top_bar_empty():
+    from services.page import fmt
+    from services.page.models import Counters
+    tiles = _tiles(Counters())
+    assert list(tiles) == ["Transfers scored", "Flagged, last 0", "Open rings", "Latency p50",
+                           "Latency p99", "Granite passed fact check"]
+    assert tiles["Transfers scored"].value == "0"
+    assert tiles["Open rings"].value == "0 of 0"
+    assert tiles["Latency p50"].value == fmt.DASH and "no scored transfers yet" in tiles["Latency p50"].help
+    assert tiles["Granite passed fact check"].value == fmt.DASH
+
+
+def test_top_bar_recent_counts_say_so():
+    from services.page.models import Counters
+    c = Counters(scored_total=4200, flagged=12, flagged_window=500, p50_ms=4.2, p99_ms=31.0,
+                 latency_samples=500, total_rings=3, open_rings=2, granite_passed=5, granite_tried=7)
+    tiles = _tiles(c)
+    assert tiles["Transfers scored"].value == "4,200"
+    assert tiles["Flagged, last 500"].value == "12"
+    assert "stats:scorer" in tiles["Flagged, last 500"].help
+    assert tiles["Open rings"].value == "2 of 3"
+    assert (tiles["Latency p50"].value, tiles["Latency p99"].value) == ("4.2 ms", "31 ms")
+    assert "last 500" in tiles["Latency p99"].help
+    assert tiles["Granite passed fact check"].value == "5 of 7"
+    assert "recent cases" in tiles["Granite passed fact check"].help
+
+
+def test_top_bar_exact_counts():
+    from services.page.models import Counters
+    c = Counters(scored_total=5000, flagged=42, flagged_window=5000, counts_exact=True,
+                 granite_passed=6, granite_tried=8, granite_from_stats=True)
+    tiles = _tiles(c)
+    assert tiles["Flagged"].value == "42" and "0.84%" in tiles["Flagged"].help
+    assert "own counter" in tiles["Granite passed fact check"].help

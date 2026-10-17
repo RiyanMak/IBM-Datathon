@@ -6,13 +6,14 @@ This is the only file that imports Streamlit. It holds no business logic: it rea
 one PageState from state.py, draws rings with graph.py, writes with decisions.py.
 
 Layout:
-  status line (Redis banner, skipped messages)          live, every 2 s
+  top bar (Redis banner, counters, latency, Granite)     live, every 2 s
   left:  ring list with sort and "open only"             live, every 2 s
   right: ring header, picture, reasons, case summary     live, every 2 s
          decision form                                   NOT live, so typing is never lost
 """
 import os
 import sys
+import time
 
 # `streamlit run` puts only this file's folder on sys.path; the repo root is two up.
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,11 +26,12 @@ from redis.retry import Retry  # noqa: E402
 
 from common import bus  # noqa: E402
 from services.page import decisions, fmt, graph, state  # noqa: E402
-from services.page.models import PageState, decision_label  # noqa: E402
+from services.page.models import PageState, decision_label, shape_label  # noqa: E402
 
 REFRESH_S = 2
 SORTS = {"Newest": "newest", "Highest score": "score"}
 DECISION_COLOURS = {"freeze": "red", "dismiss": "gray", "more_info": "orange"}
+UPGRADE_HIGHLIGHT_S = 20
 
 st.set_page_config(page_title="Mule Ring Hunter", layout="wide")
 
@@ -71,17 +73,42 @@ def selected_id():
 
 # --- live areas -----------------------------------------------------------------
 
+@st.cache_data(ttl=REFRESH_S, show_spinner=False)
+def history(ring_id: str):
+    try:
+        return state.case_history(redis_client(), ring_id)
+    except Exception:   # Redis down: the banner already says so
+        return []
+
+
+def recently_upgraded(ring_id: str) -> bool:
+    at = st.session_state.get("upgraded_at", {}).get(ring_id)
+    return at is not None and time.time() - at < UPGRADE_HIGHLIGHT_S
+
+
 @st.fragment(run_every=REFRESH_S)
-def status_line():
+def top_bar():
     snap = snapshot()
+    # Watch every ring, not only the selected one, for a template -> Granite upgrade.
+    seen = st.session_state.setdefault("seen_sources", {})
+    for rid in state.detect_upgrades(seen, snap.cases):
+        st.session_state.setdefault("upgraded_at", {})[rid] = time.time()
+        st.toast("Granite summary arrived for %s." % fmt.md(rid))
     if not snap.redis_ok:
         st.warning("Waiting for Redis at %s:%d. The page will fill in once it is reachable."
                    % (bus.redis_host(), bus.redis_port()))
     for err in snap.errors if snap.redis_ok else []:
         st.error(err)
-    if snap.skipped:
-        st.caption("Skipped malformed messages: " + ", ".join(
-            "%s %d" % (k, v) for k, v in sorted(snap.skipped.items())))
+
+    with st.container(border=True):
+        tiles = fmt.top_bar(snap.counters)
+        for col, tile in zip(st.columns(len(tiles)), tiles):
+            col.metric(tile.label, tile.value, help=tile.help)
+        notes = ["Updated %s" % time.strftime("%H:%M:%S UTC", time.gmtime())]
+        if snap.skipped:
+            notes.append("skipped malformed messages: " + ", ".join(
+                "%s %d" % (k, v) for k, v in sorted(snap.skipped.items())))
+        st.caption(fmt.md(" · ".join(notes)))
 
 
 def ring_caption(snap: PageState, ring) -> str:
@@ -96,18 +123,32 @@ def ring_caption(snap: PageState, ring) -> str:
 @st.fragment(run_every=REFRESH_S)
 def ring_list():
     snap = snapshot()
+    ss = st.session_state
+    active = sum([bool(ss.get("open_only")), bool(ss.get("shapes")), bool(ss.get("min_score"))])
+    title_col, filter_col = st.columns([3, 2], vertical_alignment="center")
+    title_col.markdown("**Rings**")
+    with filter_col.popover("Filters (%d)" % active if active else "Filters", width="stretch",
+                            key="filters"):
+        st.toggle("Open only", key="open_only", help="Hide rings that already have a decision.")
+        # Offer the shapes present now, plus any already chosen, so a choice never vanishes.
+        shapes = sorted({x.shape for x in snap.rings} | set(ss.get("shapes", [])),
+                        key=lambda s: shape_label(s))
+        st.multiselect("Shapes", shapes, key="shapes", format_func=shape_label,
+                       placeholder="All shapes")
+        st.slider("Minimum XGBoost score", 0.0, 1.0, step=0.05, key="min_score",
+                  help="Rings with no score are hidden when this is above 0.")
     sort = st.segmented_control("Sort", list(SORTS), default="Newest", key="sort",
                                 label_visibility="collapsed") or "Newest"
-    open_only = st.toggle("Open only", key="open_only",
-                          help="Hide rings that already have a decision.")
 
     rings = state.sort_rings(snap.rings, SORTS[sort])
-    if open_only:
-        rings = [x for x in rings if x.ring_id not in snap.decisions]
+    rings = state.filter_rings(rings, ss.get("shapes"), ss.get("min_score") or 0.0,
+                               bool(ss.get("open_only")), snap.decisions)
     if not rings:
-        st.info("No open rings." if open_only and snap.rings else
+        st.info("No rings match the filters." if snap.rings else
                 "No rings yet. They appear here as the ring service finds them.")
         return
+    if len(rings) < len(snap.rings):
+        st.caption("Showing %d of %d rings." % (len(rings), len(snap.rings)))
 
     ids = [x.ring_id for x in rings]
     by_id = {x.ring_id: x for x in rings}
@@ -179,6 +220,13 @@ def ring_detail():
             st.markdown("\n".join("%d. %s" % (i, fmt.md(r)) for i, r in enumerate(ring.reasons, 1)))
         else:
             st.caption("No reasons were sent with this ring.")
+        rows = fmt.fact_rows(case.facts if case else None)
+        if rows:
+            st.markdown("**Numbers behind the summary**")
+            st.markdown("| Fact | Value |\n|---|---|\n" + "\n".join(
+                "| %s | %s |" % (fmt.md(label), fmt.md(value)) for label, value in rows))
+            st.caption("Computed by our code from the ring. The fact check rejects any Granite "
+                       "summary that uses a number not in this set.")
     with summary:
         title, src = st.columns([3, 2], vertical_alignment="center")
         title.markdown("**Case summary**")
@@ -188,11 +236,20 @@ def ring_detail():
             with src:
                 badge(case.source_label, "green" if case.is_granite else "gray",
                       "%s · written %s" % (case.check_note or "no note", fmt.wall_time(case.written_at)))
+            if recently_upgraded(ring.ring_id):
+                st.success("Granite summary arrived just now. It replaced the template summary.")
             if case.version != ring.version:
                 st.caption("Written for version %d; the ring is now at version %d."
                            % (case.version, ring.version))
             for part in case.parts:
                 st.markdown("**%s**  \n%s" % (fmt.md(part.label), fmt.md(part.text)))
+            past = history(ring.ring_id)
+            if past:
+                with st.expander("Case history (%d)" % len(past)):
+                    for c in reversed(past):   # newest first
+                        st.caption(fmt.md("Version %d · %s · %s · %s" % (
+                            c.version, c.source_label, fmt.wall_time(c.written_at),
+                            c.check_note or "no note")))
 
 
 # --- decision form (not live) -----------------------------------------------------
@@ -251,10 +308,9 @@ def main():
     if "flash" in st.session_state:
         st.toast(st.session_state.pop("flash"))
 
-    status_line()
+    top_bar()
     left, right = st.columns([1, 2.6], gap="large")
     with left:
-        st.markdown("**Rings**")
         ring_list()
     with right:
         ring_detail()
