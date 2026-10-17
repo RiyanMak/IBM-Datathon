@@ -18,8 +18,7 @@ import numpy as np
 import pandas as pd
 
 from common.data_contract import SPLIT_NAMES
-
-ISO_FORMAT = "%Y-%m-%dT%H:%M:%S"
+from common.streams import TS_FORMAT_ISO
 
 INTERVAL_RULES = {
     "train": "train: ts < validation_start",
@@ -37,7 +36,7 @@ SPLIT_DTYPE = pd.CategoricalDtype(categories=list(SPLIT_NAMES), ordered=True)
 
 def to_iso(ts) -> str:
     """Timestamp as ISO text "YYYY-MM-DDTHH:MM:SS" (no timezone, no "Z")."""
-    return pd.Timestamp(ts).strftime(ISO_FORMAT)
+    return pd.Timestamp(ts).strftime(TS_FORMAT_ISO)
 
 
 def compute_cutoffs(ts_sorted: pd.Series) -> dict:

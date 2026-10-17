@@ -23,6 +23,7 @@ from common.data_contract import (
     make_account_id_series,
     canonical_bank_series,
 )
+from common.streams import TS_FORMAT_ISO
 
 # String dtype used for text columns in the normalized frame.
 # The pyarrow-backed string dtype stores ~5M rows of text in compact Arrow
@@ -325,9 +326,6 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-TS_CSV_FORMAT = "%Y-%m-%dT%H:%M:%S"
-
-
 def write_clean_csv(df: pd.DataFrame, path) -> None:
     """Write the clean table as CSV with every timestamp in one ISO format.
 
@@ -335,7 +333,7 @@ def write_clean_csv(df: pd.DataFrame, path) -> None:
     rows) whether to write "2022-09-01" or "2022-09-01 00:20:00", so a chunk of
     all-midnight rows (the start of HI-Small) produces a file with two formats.
     """
-    df.to_csv(path, index=False, date_format=TS_CSV_FORMAT)
+    df.to_csv(path, index=False, date_format=TS_FORMAT_ISO)
 
 
 def read_clean_csv(path, columns=None) -> pd.DataFrame:

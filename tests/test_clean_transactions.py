@@ -386,13 +386,8 @@ def test_csv_round_trip_when_every_timestamp_is_midnight(tmp_path):
     assert "2022-09-01," in out.read_text()
     assert read_clean_csv(out)["ts"].equals(clean["ts"])
 
-
-def test_read_clean_csv_accepts_mixed_timestamp_forms(tmp_path):
-    rows = [make_row(0, ts="2022/09/01 00:00"), make_row(1, ts="2022/09/01 00:20")]
-    clean = normalize(load_raw(write_csv(tmp_path, rows)))
-    out = tmp_path / "clean.csv"
+    # and so does one that mixes date-only, space-separated and ISO rows
     write_clean_csv(clean, out)
-    text = out.read_text().replace("2022-09-01T00:00:00", "2022-09-01").replace(
-        "2022-09-01T00:20:00", "2022-09-01 00:20:00")
-    out.write_text(text)
-    assert read_clean_csv(out)["ts"].tolist() == clean["ts"].tolist()
+    text = out.read_text().replace("2022-09-01T00:00:00", "2022-09-01", 1)
+    out.write_text(text.replace("2022-09-01T00:00:00", "2022-09-01 00:00:00", 1))
+    assert read_clean_csv(out)["ts"].equals(clean["ts"])
