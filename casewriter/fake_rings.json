@@ -1,0 +1,70 @@
+[
+  {
+    "ring_id": "R-0001",
+    "version": 1,
+    "shape": "scatter-gather",
+    "n_accounts": 9,
+    "accounts": ["27_SRC0001A0", "10_8000EBD30", "11_8001A2B40", "12_8002C3D50", "13_8003E4F60",
+                 "14_8004A5B70", "15_8005C6D80", "16_8006E7F90", "27_80A1C4F20"],
+    "edges": [
+      {"txn_id": "4100001", "from": "27_SRC0001A0", "to": "10_8000EBD30", "amount_usd": 10000.00, "ts": "2022-09-08T14:00:00", "score": 0.71},
+      {"txn_id": "4100120", "from": "10_8000EBD30", "to": "11_8001A2B40", "amount_usd": 1650.00, "ts": "2022-09-08T14:40:00", "score": 0.94},
+      {"txn_id": "4100133", "from": "10_8000EBD30", "to": "12_8002C3D50", "amount_usd": 1630.00, "ts": "2022-09-08T14:52:00", "score": 0.95},
+      {"txn_id": "4100150", "from": "10_8000EBD30", "to": "13_8003E4F60", "amount_usd": 1640.00, "ts": "2022-09-08T15:05:00", "score": 0.93},
+      {"txn_id": "4100171", "from": "10_8000EBD30", "to": "14_8004A5B70", "amount_usd": 1620.00, "ts": "2022-09-08T15:20:00", "score": 0.96},
+      {"txn_id": "4100188", "from": "10_8000EBD30", "to": "15_8005C6D80", "amount_usd": 1630.00, "ts": "2022-09-08T15:33:00", "score": 0.94},
+      {"txn_id": "4100205", "from": "10_8000EBD30", "to": "16_8006E7F90", "amount_usd": 1630.00, "ts": "2022-09-08T15:48:00", "score": 0.95},
+      {"txn_id": "4100390", "from": "11_8001A2B40", "to": "27_80A1C4F20", "amount_usd": 1600.00, "ts": "2022-09-08T17:10:00", "score": 0.90},
+      {"txn_id": "4100402", "from": "12_8002C3D50", "to": "27_80A1C4F20", "amount_usd": 1590.00, "ts": "2022-09-08T17:25:00", "score": 0.91},
+      {"txn_id": "4100415", "from": "13_8003E4F60", "to": "27_80A1C4F20", "amount_usd": 1600.00, "ts": "2022-09-08T17:41:00", "score": 0.89},
+      {"txn_id": "4100430", "from": "14_8004A5B70", "to": "27_80A1C4F20", "amount_usd": 1580.00, "ts": "2022-09-08T18:02:00", "score": 0.92},
+      {"txn_id": "4100447", "from": "15_8005C6D80", "to": "27_80A1C4F20", "amount_usd": 1590.00, "ts": "2022-09-08T18:20:00", "score": 0.90},
+      {"txn_id": "4100460", "from": "16_8006E7F90", "to": "27_80A1C4F20", "amount_usd": 1590.00, "ts": "2022-09-08T18:44:00", "score": 0.91}
+    ],
+    "xgb_score": 0.93,
+    "gnn_score": 0.88,
+    "reasons": ["money left 40 minutes after it arrived", "6 payees never paid before", "98% passed straight on"],
+    "first_seen": "2022-09-08T14:00:00",
+    "last_seen": "2022-09-08T18:44:00"
+  },
+  {
+    "ring_id": "R-0002",
+    "version": 1,
+    "shape": "fan-out",
+    "n_accounts": 8,
+    "accounts": ["3_A00F12C40", "20_B1100AA01", "21_B1100AA02", "22_B1100AA03", "23_B1100AA04",
+                 "24_B1100AA05", "25_B1100AA06", "26_B1100AA07"],
+    "edges": [
+      ["5200010", "3_A00F12C40", "20_B1100AA01", 1180.50, "2022-09-09T09:05:00", 0.77],
+      ["5200022", "3_A00F12C40", "21_B1100AA02", 1240.00, "2022-09-09T09:31:00", 0.81],
+      ["5200037", "3_A00F12C40", "22_B1100AA03", 990.25, "2022-09-09T10:02:00", 0.74],
+      ["5200051", "3_A00F12C40", "23_B1100AA04", 1310.00, "2022-09-09T10:40:00", 0.83],
+      ["5200063", "3_A00F12C40", "24_B1100AA05", 1075.75, "2022-09-09T11:15:00", 0.79],
+      ["5200078", "3_A00F12C40", "25_B1100AA06", 1220.00, "2022-09-09T11:48:00", 0.80],
+      ["5200090", "3_A00F12C40", "26_B1100AA07", 1145.00, "2022-09-09T12:20:00", 0.78]
+    ],
+    "xgb_score": 0.79,
+    "gnn_score": 0.72,
+    "reasons": ["7 new payees in 3 hours", "amounts just over $1,000 each", "sender had no prior activity"],
+    "first_seen": "2022-09-09T09:05:00",
+    "last_seen": "2022-09-09T12:20:00"
+  },
+  {
+    "ring_id": "R-0003",
+    "version": 2,
+    "shape": "CYCLE",
+    "n_accounts": 4,
+    "accounts": ["5_C0FFEE001", "6_C0FFEE002", "7_C0FFEE003", "8_C0FFEE004"],
+    "edges": [
+      {"txn_id": "6300001", "from": "5_C0FFEE001", "to": "6_C0FFEE002", "amount_usd": 5000.00, "ts": "2022-09-07T08:00:00", "score": 0.85},
+      {"txn_id": "6300044", "from": "6_C0FFEE002", "to": "7_C0FFEE003", "amount_usd": 4900.00, "ts": "2022-09-07T09:30:00", "score": 0.88},
+      {"txn_id": "6300090", "from": "7_C0FFEE003", "to": "8_C0FFEE004", "amount_usd": 4800.00, "ts": "2022-09-07T11:10:00", "score": 0.87},
+      {"txn_id": "6300131", "from": "8_C0FFEE004", "to": "5_C0FFEE001", "amount_usd": 4700.00, "ts": "2022-09-07T13:45:00", "score": 0.90}
+    ],
+    "xgb_score": 0.88,
+    "gnn_score": 0.91,
+    "reasons": ["money returned to its starting account", "each hop kept about 2% of the amount", "4 hops in under 6 hours"],
+    "first_seen": "2022-09-07T08:00:00",
+    "last_seen": "2022-09-07T13:45:00"
+  }
+]
