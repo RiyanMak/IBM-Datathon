@@ -1,1 +1,9 @@
 .env
+HI-Small_trans.csv 
+.venv/
+__pycache__/
+.pytest_cache/
+data/
+HI-Small_*.csv
+HI-Small_*.txt
+.DS_Store
