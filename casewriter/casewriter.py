@@ -1,0 +1,168 @@
+"""
+Step 5 - the case writer service.
+
+Reads rings from the Redis stream `rings`, writes cases to the stream `cases`.
+
+How to run (from inside the casewriter folder):
+  python3 casewriter.py --file fake_rings.json     # no Redis needed: prints cases
+  python3 casewriter.py --push-fake fake_rings.json  # put fake rings on Redis (testing)
+  python3 casewriter.py --redis                    # the real service
+
+Granite is used automatically when the watsonx settings exist (see granite.py).
+Add --no-granite to force the template.
+"""
+import argparse
+import json
+import os
+import socket
+import sys
+from datetime import datetime
+
+from facts import parse_ring, build_facts
+from template import template_summary
+from factcheck import check_reply
+import granite
+
+IN_STREAM = "rings"
+OUT_STREAM = "cases"
+GROUP = "casewriter"
+
+
+class Stats:
+    """Counts how often Granite passes the fact check - a number for the pitch."""
+    def __init__(self):
+        self.cases = 0
+        self.granite_tried = 0
+        self.granite_passed = 0
+
+    def line(self):
+        return "cases written: %d | Granite passed the fact check in %d of %d tries" % (
+            self.cases, self.granite_passed, self.granite_tried)
+
+
+def write_case(fields, use_granite, stats=None, granite_fn=None):
+    """Turn one ring message into one case message (a dict of text values)."""
+    granite_fn = granite_fn or granite.call_granite
+    ring = parse_ring(fields)
+    facts = build_facts(ring)
+    summary = template_summary(facts)
+    source, note = "template", "granite not used"
+
+    if use_granite:
+        if stats:
+            stats.granite_tried += 1
+        try:
+            reply = granite.parse_reply(granite_fn(facts))
+            ok, why = check_reply(reply, facts, ring["accounts"])
+            if ok:
+                summary = {k: reply[k] for k in summary}  # keep only the 5 parts
+                source, note = "granite", "passed fact check"
+                if stats:
+                    stats.granite_passed += 1
+            else:
+                note = "granite reply rejected: " + why
+        except Exception as exc:  # network error, bad JSON, timeout...
+            note = "granite error: %s" % str(exc)[:200]
+
+    if stats:
+        stats.cases += 1
+    return {
+        "ring_id": ring["ring_id"],
+        "version": ring["version"],
+        "summary": json.dumps(summary),
+        "source": source,
+        "check_note": note,
+        "written_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "facts": json.dumps(facts),   # extra field: lets the page show the numbers
+    }
+
+
+def ring_to_stream_fields(ring):
+    """Fake ring (Python dict) -> text values, exactly as the ring service sends them."""
+    out = {}
+    for k, v in ring.items():
+        out[k] = json.dumps(v) if isinstance(v, (list, dict)) else str(v)
+    return out
+
+
+def run_file(path, use_granite):
+    stats = Stats()
+    with open(path) as fh:
+        rings = json.load(fh)
+    for ring in rings:
+        case = write_case(ring_to_stream_fields(ring), use_granite, stats)
+        print("=" * 70)
+        print("ring %s  (source: %s, %s)" % (case["ring_id"], case["source"], case["check_note"]))
+        for part, text in json.loads(case["summary"]).items():
+            print("\n%s:\n  %s" % (part, text))
+    print("=" * 70)
+    print(stats.line())
+
+
+def connect_redis():
+    import redis
+    return redis.Redis(host=os.environ.get("REDIS_HOST", "localhost"),
+                       port=int(os.environ.get("REDIS_PORT", "6379")),
+                       decode_responses=True)
+
+
+def push_fake(path, r=None):
+    r = r or connect_redis()
+    with open(path) as fh:
+        rings = json.load(fh)
+    for ring in rings:
+        r.xadd(IN_STREAM, ring_to_stream_fields(ring))
+    print("pushed %d fake rings onto '%s'" % (len(rings), IN_STREAM))
+
+
+def run_redis(use_granite, r=None, max_loops=None):
+    import redis
+    r = r or connect_redis()
+    try:
+        r.xgroup_create(IN_STREAM, GROUP, id="0", mkstream=True)
+    except redis.exceptions.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):   # group already exists = fine
+            raise
+    consumer = socket.gethostname()
+    stats = Stats()
+    print("case writer listening on '%s' (Granite: %s)" % (IN_STREAM, "on" if use_granite else "off"))
+    loops = 0
+    while max_loops is None or loops < max_loops:
+        loops += 1
+        reply = r.xreadgroup(GROUP, consumer, {IN_STREAM: ">"}, count=10, block=5000)
+        for _stream, messages in reply or []:
+            for msg_id, fields in messages:
+                try:
+                    case = write_case(fields, use_granite, stats)
+                    r.xadd(OUT_STREAM, case)
+                    print("case for %s v%s (%s)" % (case["ring_id"], case["version"], case["source"]))
+                except Exception as exc:
+                    print("skipped bad ring message %s: %s" % (msg_id, exc), file=sys.stderr)
+                r.xack(IN_STREAM, GROUP, msg_id)
+        if stats.cases:
+            print(stats.line())
+    return stats
+
+
+def main():
+    granite.load_env_file()
+    p = argparse.ArgumentParser(description="Mule Ring Hunter case writer")
+    p.add_argument("--file", help="read fake rings from a JSON file and print the cases")
+    p.add_argument("--push-fake", help="push fake rings from a JSON file onto Redis")
+    p.add_argument("--redis", action="store_true", help="run the real service on Redis")
+    p.add_argument("--no-granite", action="store_true", help="always use the template")
+    args = p.parse_args()
+
+    use_granite = granite.granite_configured() and not args.no_granite
+    if args.file:
+        run_file(args.file, use_granite)
+    elif args.push_fake:
+        push_fake(args.push_fake)
+    elif args.redis:
+        run_redis(use_granite)
+    else:
+        p.print_help()
+
+
+if __name__ == "__main__":
+    main()
