@@ -147,9 +147,11 @@ def test_live_dict_path_matches_offline_list_path():
         assert np.array_equal(np.array(a, dtype=np.float32), np.array(list(d.values()), dtype=np.float32))
 
 
-def test_to_minutes_accepts_text_and_pandas_timestamps():
+def test_to_minutes_accepts_text_pandas_timestamps_and_datetimes():
+    from datetime import datetime
     import pandas as pd
     assert to_minutes("2022-09-01T00:20:00") == to_minutes(pd.Timestamp("2022-09-01 00:20"))
+    assert to_minutes("2022-09-01T00:20:00") == to_minutes(datetime(2022, 9, 1, 0, 20))
     assert to_minutes("2022-09-01T00:21:00") - to_minutes("2022-09-01T00:20:00") == 1
     assert to_minutes("2022-09-02T00:20:00") - to_minutes("2022-09-01T00:20:00") == DAY
 

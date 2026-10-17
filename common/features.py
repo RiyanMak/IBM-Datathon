@@ -37,11 +37,13 @@ FEATURE_NAMES = [
 
 
 def to_minutes(ts) -> int:
-    """ISO text such as '2022-09-01T00:20:00' (or a pandas Timestamp) -> whole minutes since epoch."""
+    """ISO text such as '2022-09-01T00:20:00', a pandas Timestamp or a datetime
+    (as common.streams.message_to_txn returns) -> whole minutes since epoch."""
     if isinstance(ts, str):
-        dt = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
-        return int(dt.timestamp() // 60)
-    return int(ts.value // 60_000_000_000)
+        ts = datetime.fromisoformat(ts)
+    if hasattr(ts, "value"):    # pandas Timestamp
+        return int(ts.value // 60_000_000_000)
+    return int(ts.replace(tzinfo=timezone.utc).timestamp() // 60)
 
 
 def _bank(acct: str) -> str:

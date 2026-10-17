@@ -1,12 +1,12 @@
 """
 Step 1 - the replayer.
 
-Reads the cleaned transactions (clean.parquet) and plays the test period onto
+Reads the cleaned transactions (clean.csv) and plays the test period onto
 the Redis stream `txns`, in time order, sped up (default 600x: one data minute
 every 0.1 real seconds). The scorer reads that stream.
 
 How to run (from the repo root):
-  python -m services.replayer.main --clean data/processed/v1/clean.parquet \\
+  python -m services.replayer.main --clean data/processed/v1/clean.csv \\
       --splits data/processed/v1/splits.json --dry-run          # no Redis: prints messages
   python -m services.replayer.main                               # the real service (Docker)
   python -m services.replayer.main --resume                      # continue after Ctrl+C
@@ -91,12 +91,10 @@ def load_rows(clean_path, start):
     Only TXN_COLUMNS are read; label, split and the rest stay on disk.
     """
     import pandas as pd
+    from common.clean_transactions import read_clean_csv
 
-    df = pd.read_parquet(
-        clean_path,
-        columns=list(TXN_COLUMNS),
-        filters=[("ts", ">=", pd.Timestamp(start))],
-    )
+    df = read_clean_csv(clean_path, columns=TXN_COLUMNS)
+    df = df[df["ts"] >= pd.Timestamp(start)]
     df = df.sort_values(["ts", "txn_id"], kind="mergesort").reset_index(drop=True)
     check_order(df)
     return df
@@ -115,7 +113,7 @@ def check_order(df):
     ids = df["txn_id"]
     if len(ids) > 1 and not (ids.diff().iloc[1:] > 0).all():
         raise ValueError("txn_id does not increase with (ts, txn_id); "
-                         "clean.parquet does not look like the cleaning pipeline's output")
+                         "clean.csv does not look like the cleaning pipeline's output")
 
 
 def skip_already_sent(df, last_txn_id):
@@ -263,9 +261,9 @@ def default_speed():
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="Mule Ring Hunter replayer: clean.parquet -> Redis stream")
-    p.add_argument("--clean", default=os.environ.get("CLEAN_PATH", "/data/clean.parquet"),
-                   help="cleaned transactions (default: $CLEAN_PATH or /data/clean.parquet)")
+    p = argparse.ArgumentParser(description="Mule Ring Hunter replayer: clean.csv -> Redis stream")
+    p.add_argument("--clean", default=os.environ.get("CLEAN_PATH", "/data/clean.csv"),
+                   help="cleaned transactions (default: $CLEAN_PATH or /data/clean.csv)")
     p.add_argument("--splits", default=os.environ.get("SPLITS_PATH", "/data/splits.json"),
                    help="split cut-offs (default: $SPLITS_PATH or /data/splits.json)")
     p.add_argument("--start", help="first data time to send, YYYY-MM-DDTHH:MM:SS "

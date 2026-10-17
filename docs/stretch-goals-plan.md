@@ -62,7 +62,7 @@ We start when **all** of these are on `main`:
 - [ ] `services/scorer/main.py` reads `txns` with a consumer group, runs `ClueBuilder`, scores with `models/scorer.json`, writes `scored`.
 - [ ] `models/feature_list.json`, `models/scorer.json`, `models/thresholds.json` exist (or a documented reason they live only on the VM).
 - [ ] `services/rings/main.py` writes `rings` messages with the guide's fields, including `edges` with real `txn_id`s and `first_seen`.
-- [ ] Someone has confirmed the scorer does **warm-up**: it loops `clean.parquet` from the first row up to `test_start` through the same `ClueBuilder`, with no labels, before reading the stream. Without this every account looks brand-new at the start of the test period and the "new payee" and "account age" clues are wrong. The replayer deliberately does not send that history.
+- [ ] Someone has confirmed the scorer does **warm-up**: it loops `clean.csv` from the first row up to `test_start` through the same `ClueBuilder`, with no labels, before reading the stream. Without this every account looks brand-new at the start of the test period and the "new payee" and "account age" clues are wrong. The replayer deliberately does not send that history.
 
 Until then: Aryan can do the data half of feature 1 (section 3.3, steps D1 to D3), which needs only the raw files, and set up the Slack app (section 4.4), which needs no code.
 
@@ -117,31 +117,31 @@ Rules:
 
 These follow the laptop cleaning plan (`docs/Mule_Ring_Hunter_Laptop_Cleaning_Plan.md`, stages E and F) and reuse `common/data_contract.py`.
 
-**D1. Accounts reference → `accounts_clean.parquet`.**
-Input `HI-Small_accounts.csv` (Kevin's SHA-256 `786808526e33cfc441212dd6fccda7edfc24172149bed59c6ef59b186836b014`). Rename `Bank Name → bank_name`, `Bank ID → bank_id`, `Account Number → account_raw`, `Entity ID → entity_id`, `Entity Name → entity_name`; add `account_id` with `make_account_id`. All identifiers stay text. Checks: 518,581 rows, `account_id` unique, every `from_acct`/`to_acct` in `clean.parquet` present (expected missing: 0), 3,493 reference accounts unused by transactions, 515,088 active accounts. This also settles the open question from the cleaning run: 58 banks appear with more than one zero-padding (`010` and `0010`); if the accounts table uses one canonical form per bank and every transaction endpoint matches, the merge was right.
+**D1. Accounts reference → `accounts_clean.csv`.**
+Input `HI-Small_accounts.csv` (Kevin's SHA-256 `786808526e33cfc441212dd6fccda7edfc24172149bed59c6ef59b186836b014`). Rename `Bank Name → bank_name`, `Bank ID → bank_id`, `Account Number → account_raw`, `Entity ID → entity_id`, `Entity Name → entity_name`; add `account_id` with `make_account_id`. All identifiers stay text. Checks: 518,581 rows, `account_id` unique, every `from_acct`/`to_acct` in `clean.csv` present (expected missing: 0), 3,493 reference accounts unused by transactions, 515,088 active accounts. This also settles the open question from the cleaning run: 58 banks appear with more than one zero-padding (`010` and `0010`); if the accounts table uses one canonical form per bank and every transaction endpoint matches, the merge was right.
 
-**D2. Patterns → `patterns.parquet`.**
-Parse `BEGIN LAUNDERING ATTEMPT - <SHAPE>[: extra]` … `END LAUNDERING ATTEMPT` blocks. Reject nested or unclosed blocks and transfer lines outside a block. Assign zero-based `attempt_id`, `pattern_row_id`, `pattern_line`, `shape` (text before the colon, compound names such as `SCATTER-GATHER` kept). Match each pattern row to exactly one raw transaction on the full key: timestamp, both bank/account pairs (through the shared canonical helper), both native amounts as exact `Decimal` tokens, both currencies, payment format. Label is **not** in the key; verify it is 1 after matching. Scan the raw CSV once in chunks; keep every candidate `source_row` (do not let a dictionary overwrite a duplicate); require exactly one match per row; then map `source_row → txn_id, split` through `clean.parquet`. Expected: 3,209 unique, 0 ambiguous, 0 missing. Save the columns from the laptop plan's contract (`attempt_id, shape, pattern_row_id, pattern_line, source_row, txn_id, ts, from_acct, to_acct, amt_paid, ccy_paid, amt_recv, ccy_recv, fmt, split`) plus a per-attempt table: `attempt_id, shape, n_rows, n_accounts, first_ts, last_ts, total_usd, split_membership` (`train`, `validation`, `test`, or `spans`).
+**D2. Patterns → `patterns.csv`.**
+Parse `BEGIN LAUNDERING ATTEMPT - <SHAPE>[: extra]` … `END LAUNDERING ATTEMPT` blocks. Reject nested or unclosed blocks and transfer lines outside a block. Assign zero-based `attempt_id`, `pattern_row_id`, `pattern_line`, `shape` (text before the colon, compound names such as `SCATTER-GATHER` kept). Match each pattern row to exactly one raw transaction on the full key: timestamp, both bank/account pairs (through the shared canonical helper), both native amounts as exact `Decimal` tokens, both currencies, payment format. Label is **not** in the key; verify it is 1 after matching. Scan the raw CSV once in chunks; keep every candidate `source_row` (do not let a dictionary overwrite a duplicate); require exactly one match per row; then map `source_row → txn_id, split` through `clean.csv`. Expected: 3,209 unique, 0 ambiguous, 0 missing. Save the columns from the laptop plan's contract (`attempt_id, shape, pattern_row_id, pattern_line, source_row, txn_id, ts, from_acct, to_acct, amt_paid, ccy_paid, amt_recv, ccy_recv, fmt, split`) plus a per-attempt table: `attempt_id, shape, n_rows, n_accounts, first_ts, last_ts, total_usd, split_membership` (`train`, `validation`, `test`, or `spans`).
 
 **D3. `cleaning_manifest.json`.**
 Input paths and SHA-256 of all three raw files, package versions, schema version, output paths and sizes, completion status (`core: done`, `accounts: done`, `patterns: done`), and the row counts above. One file a teammate can read to know they have the same release.
 
-Proposed files: `common/accounts.py`, `common/patterns.py`, `scripts/clean_accounts.py`, `scripts/match_patterns.py`, `scripts/write_manifest.py`, tests under `tests/`. Outputs go to `data/processed/v1/` next to `clean.parquet`. Same rules as the cleaning milestone: no silent drops, stop on contract violations, independent spot checks against the raw files, sample observations labelled as such.
+Proposed files: `common/accounts.py`, `common/patterns.py`, `scripts/clean_accounts.py`, `scripts/match_patterns.py`, `scripts/write_manifest.py`, tests under `tests/`. Outputs go to `data/processed/v1/` next to `clean.csv`. Same rules as the cleaning milestone: no silent drops, stop on contract violations, independent spot checks against the raw files, sample observations labelled as such.
 
 ### 3.4 The scoring half: `scripts/evaluate.py`
 
 Inputs:
 
 - `--rings`: either a live Redis (read `XRANGE rings - +`; the stream is small) or a JSON-lines dump of `rings` messages taken after a replay (`redis-cli XRANGE rings - +` piped through a tiny converter, or `r.xrange` from Python). The dump form is what we commit as evidence.
-- `--patterns data/processed/v1/patterns.parquet`
-- `--clean data/processed/v1/clean.parquet` (only `txn_id, ts, amount_usd, from_acct, to_acct`, for attempt money and timing)
+- `--patterns data/processed/v1/patterns.csv`
+- `--clean data/processed/v1/clean.csv` (only `txn_id, ts, amount_usd, from_acct, to_acct`, for attempt money and timing)
 - `--splits data/processed/v1/splits.json`
 - `--replay-start` (ISO; default `test_start`)
 - `--out data/processed/v1/evaluation.md` plus `evaluation.json`
 
 Algorithm:
 
-1. Build `attempt → set(accounts)`, `attempt → first_ts, last_ts, total_usd, shape, membership` from `patterns.parquet`.
+1. Build `attempt → set(accounts)`, `attempt → first_ts, last_ts, total_usd, shape, membership` from `patterns.csv`.
 2. Keep attempts whose first transfer is at or after `--replay-start`; that is the headline set. Keep the rest as the "started earlier" set.
 3. For each `ring_id`, take its **first** version's `first_seen` as the alert time and its **latest** version's `accounts` and `shape` for matching. (Decision recorded in section 11: alert time comes from the first version, because that is when a person could first have acted.)
 4. Match: for each ring and each attempt, `overlap = |ring.accounts ∩ attempt.accounts|`. The ring catches the attempt if `overlap ≥ ceil(len(ring.accounts) / 2)`. If a ring catches several attempts, credit all of them but count the ring once for precision. If several rings catch one attempt, the attempt's alert time is the earliest.
@@ -288,7 +288,7 @@ Not for the event, written down so nobody is surprised: a full Teams bot (Bot Fr
 
 ### 5.1 What it is
 
-A one-page Markdown document per ring, built from the same facts pack the case writer computes and the summary it wrote. It is the draft of what an investigator would file; in the US that is a Suspicious Activity Report. Every number in it comes from the facts pack; every transfer line carries its `txn_id` so anyone can trace it back to `clean.parquet` and from there (through `source_row`) to the raw CSV line.
+A one-page Markdown document per ring, built from the same facts pack the case writer computes and the summary it wrote. It is the draft of what an investigator would file; in the US that is a Suspicious Activity Report. Every number in it comes from the facts pack; every transfer line carries its `txn_id` so anyone can trace it back to `clean.csv` and from there (through `source_row`) to the raw CSV line.
 
 Why it matters: a dashboard widget is what every team shows. A downloadable, traceable report shows we understand the investigator's actual job, and "every number traces to a `txn_id`" is a strong answer to "how do you know the AI did not make this up."
 
@@ -299,7 +299,7 @@ Why it matters: a dashboard widget is what every team shows. A downloadable, tra
 3. Key facts table: `total_usd`, `n_accounts`, `n_transfers`, `first_seen`, `last_seen`, `duration_hours`, `key_account` (as "possible victim"), `key_received_usd`, `key_sent_usd`, `passed_on_pct`, `hours_to_pass_on`, `origin`, `collector`, `n_just_under_threshold` (with `reporting_threshold_usd`), `xgb_score`, `gnn_score`, `top_reasons`.
 4. Accounts involved: the `accounts` list, with roles (possible victim / origin / collector / other).
 5. Transfers: a table of `edges`: `ts`, `txn_id`, `from`, `to`, `amount_usd`, `score`. Sorted by time. Capped at 200 rows with a note if longer.
-6. Data lineage: "Transaction IDs refer to `clean.parquet` release v1 (input SHA-256 b19d39f5…). Amounts in USD use exchange rates fitted on the training period only (`fx_rates.json`)." Pull the hash from `cleaning_manifest.json` when present.
+6. Data lineage: "Transaction IDs refer to `clean.csv` release v1 (input SHA-256 b19d39f5…). Amounts in USD use exchange rates fitted on the training period only (`fx_rates.json`)." Pull the hash from `cleaning_manifest.json` when present.
 7. Decision log: every `decisions` message for this ring (who, what, when, note).
 8. Disclaimer: synthetic data; "activity consistent with", not an accusation; a person decides.
 
@@ -354,7 +354,7 @@ Optional. Runs the replayer at `--speed 0` into a stream with a short `--maxlen`
 
 - The `Dockerfile` base image placeholder must be filled before anything else; it is the first line of the runbook.
 - The scorer must use `XREADGROUP` with a consumer group and `XACK` after scoring. Without a group, `--scale scorer=3` makes every replica score every message, and the kill-and-recover demo cannot work.
-- The data files go **directly** in `~/shared/` (`clean.parquet`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and later `patterns.parquet`), because the services default to `/data/<name>`. Or set `CLEAN_PATH` and `SPLITS_PATH` in compose.
+- The data files go **directly** in `~/shared/` (`clean.csv`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and later `patterns.csv`), because the services default to `/data/<name>`. Or set `CLEAN_PATH` and `SPLITS_PATH` in compose.
 
 ---
 
@@ -412,7 +412,7 @@ All values on Redis are text; lists and objects are JSON text.
 | `notifier:messages` (hash) | notifier | notifier | `ring_id → adapter message reference` | new |
 | `stats:casewriter` (hash) | casewriter (planned C2) | page, notifier footer | `cases_written, granite_tried, granite_passed` | planned by casewriter |
 
-Files in `~/shared` (`/data` inside containers): `clean.parquet`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and after D1 to D3: `accounts_clean.parquet`, `patterns.parquet`, `cleaning_manifest.json`.
+Files in `~/shared` (`/data` inside containers): `clean.csv`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and after D1 to D3: `accounts_clean.csv`, `patterns.csv`, `cleaning_manifest.json`.
 
 ---
 
@@ -422,7 +422,7 @@ Assumes two people once the model work lands; one person roughly doubles the wal
 
 | Order | Task | Who | Hours | Done when |
 |---|---|---|---|---|
-| 0 (now) | D1 accounts, D2 patterns, D3 manifest | Aryan | 1.5 | counts match Kevin's blueprint; `patterns.parquet` written; manifest written |
+| 0 (now) | D1 accounts, D2 patterns, D3 manifest | Aryan | 1.5 | counts match Kevin's blueprint; `patterns.csv` written; manifest written |
 | 0 (now) | Slack app and tokens in `.env` | Aryan | 0.3 | a test `chat.postMessage` from a Python one-liner lands in the channel |
 | 1 | `scripts/evaluate.py` + tests | A | 1.0 | perfect-ring and fake-ring tests pass; report readable |
 | 2 | notifier core + console adapter + decisions + tests | B | 1.0 | three fake cases print; a console click writes `decisions` |

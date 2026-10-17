@@ -344,6 +344,18 @@ def test_normalize_returns_new_frame(tmp_path):
     assert raw.equals(before)
 
 
+def test_read_clean_csv_column_subset(tmp_path):
+    clean = normalize(load_raw(write_csv(tmp_path, GOOD_ROWS)))
+    out = tmp_path / "clean.csv"
+    clean.to_csv(out, index=False)
+    cols = ["ts", "source_row", "from_acct", "amt_paid", "ccy_paid"]
+    part = read_clean_csv(out, columns=cols)
+    assert list(part.columns) == cols
+    assert part.equals(clean[cols])
+    with pytest.raises(ValueError, match="no_such_column"):
+        read_clean_csv(out, columns=["ts", "no_such_column"])
+
+
 def test_csv_round_trip(tmp_path):
     rows = GOOD_ROWS + [make_row(3, amt="4197895233.69", label="1"),
                         make_row(4, from_acct="0080AB", amt="0.000004")]

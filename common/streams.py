@@ -53,7 +53,7 @@ TXN_FIELDS = (
     "sent_at",
 )
 
-# The columns the replayer needs from clean.parquet (everything except sent_at).
+# The columns the replayer needs from clean.csv (everything except sent_at).
 TXN_COLUMNS = TXN_FIELDS[:-1]
 
 AMOUNT_FIELDS = ("amount_usd", "amt_paid", "amt_recv")

@@ -13,6 +13,8 @@ import pandas as pd
 import pytest
 
 from common import bus
+from common.clean_transactions import read_clean_csv
+from common.features import ClueBuilder
 from common.streams import (
     TXN_FIELDS,
     TXN_COLUMNS,
@@ -60,7 +62,7 @@ def fake_redis():
 
 
 def make_rows(timestamps, first_id=0):
-    """A small frame shaped like clean.parquet's transaction columns."""
+    """A small frame shaped like clean.csv's transaction columns."""
     n = len(timestamps)
     return pd.DataFrame({
         "txn_id": pd.Series(range(first_id, first_id + n), dtype="int64"),
@@ -83,7 +85,7 @@ def minutes(start, count, step=1):
 
 @pytest.fixture
 def fixture_files(tmp_path):
-    """A tiny clean.parquet (2 train rows, 6 test rows) and splits.json.
+    """A tiny clean.csv (2 train rows, 6 test rows) and splits.json.
 
     The label column holds text that is not a valid label, and split says
     'train' for every row: if the replayer ever used them, tests would notice.
@@ -97,8 +99,8 @@ def fixture_files(tmp_path):
     df["label"] = ["NOT-A-LABEL"] * len(df)
     df["split"] = ["train"] * len(df)
     # Store the rows shuffled, so the replayer has to sort them itself.
-    clean = tmp_path / "clean.parquet"
-    df.sample(frac=1, random_state=1).to_parquet(clean, index=False)
+    clean = tmp_path / "clean.csv"
+    df.sample(frac=1, random_state=1).to_csv(clean, index=False)
 
     splits = tmp_path / "splits.json"
     splits.write_text(json.dumps({
@@ -158,6 +160,16 @@ def test_sent_at_format():
     assert abs(float(now_sent_at()) - datetime.now().timestamp()) < 5
 
 
+def test_scorer_gets_the_same_clues_from_raw_and_decoded_messages():
+    # The scorer may pass the text fields or message_to_txn's values (ts as a
+    # datetime) to ClueBuilder.compute; both must give the same clues.
+    raw, decoded = ClueBuilder(), ClueBuilder()
+    rows = make_rows(minutes("2022-09-08T16:12:00", 20, step=7)).to_dict("records")
+    for row in rows:
+        msg = txn_to_message(row, now_sent_at())
+        assert raw.compute(msg) == decoded.compute(message_to_txn(msg))
+
+
 def test_message_to_txn_rejects_missing_and_extra_fields():
     msg = txn_to_message(make_rows(["2022-09-08T16:12:00"]).iloc[0].to_dict(), now_sent_at())
     with pytest.raises(ValueError):
@@ -214,25 +226,25 @@ def test_sample_data_gives_a_warning(fixture_files, capsys):
 
 
 def test_label_column_is_never_requested(fixture_files, monkeypatch):
-    asked = {}
-    real_read = pd.read_parquet
+    asked = []
+    real_read = pd.read_csv
 
-    def spy(path, columns=None, **kwargs):
-        asked["columns"] = columns
-        return real_read(path, columns=columns, **kwargs)
+    def spy(path, *args, **kwargs):
+        if not kwargs.get("nrows") == 0:          # the header peek reads no rows
+            asked.append(kwargs.get("usecols"))
+        return real_read(path, *args, **kwargs)
 
-    monkeypatch.setattr(pd, "read_parquet", spy)
+    monkeypatch.setattr(pd, "read_csv", spy)
     rows = load_rows(fixture_files["clean"], datetime(2022, 9, 8, 16, 12))
-    assert asked["columns"] == list(TXN_COLUMNS)
-    assert "label" not in asked["columns"] and "split" not in asked["columns"]
-    assert "label" not in rows.columns
+    assert asked == [list(TXN_COLUMNS)]
+    assert "label" not in rows.columns and "split" not in rows.columns
 
 
 def test_works_without_a_label_column(tmp_path, fixture_files):
-    # A parquet file with no label column at all: reading label would crash.
+    # A file with no label column at all: reading label would crash.
     df = fixture_files["df"][list(TXN_COLUMNS)]
-    path = tmp_path / "no_label.parquet"
-    df.to_parquet(path, index=False)
+    path = tmp_path / "no_label.csv"
+    df.to_csv(path, index=False)
     assert len(load_rows(str(path), datetime(2022, 9, 8, 16, 12))) == 6
 
 
@@ -257,8 +269,8 @@ def test_tied_timestamps_are_sorted_by_txn_id(tmp_path):
     r = fake_redis()
     df = make_rows(["2022-09-08T16:12:00"] * 3 + ["2022-09-08T16:13:00"])
     df = df.iloc[[2, 0, 3, 1]]           # stored out of order
-    path = tmp_path / "c.parquet"
-    df.to_parquet(path, index=False)
+    path = tmp_path / "c.csv"
+    df.to_csv(path, index=False)
     rows = load_rows(str(path), datetime(2022, 9, 8, 16, 12))
     replay(r, rows, "t", speed=0)
     assert [int(f["txn_id"]) for _id, f in r.xrange("t")] == [0, 1, 2, 3]
@@ -347,8 +359,8 @@ def test_maxlen_keeps_stream_near_the_cap():
 def test_resume_continues_without_duplicates(tmp_path):
     r = fake_redis()
     df = make_rows(minutes("2022-09-08T16:12:00", 100))
-    path = tmp_path / "clean.parquet"
-    df.to_parquet(path, index=False)
+    path = tmp_path / "clean.csv"
+    df.to_csv(path, index=False)
     splits = tmp_path / "splits.json"
     splits.write_text(json.dumps({"test_start": TEST_START, "provenance": {"mode": "full"}}))
     args = ["--clean", str(path), "--splits", str(splits), "--speed", "0"]
@@ -369,7 +381,7 @@ def test_resume_on_empty_stream_starts_at_the_beginning(fixture_files):
 
 # ---------------------------------------------------------------- end to end
 
-def test_end_to_end_messages_match_the_parquet(fixture_files):
+def test_end_to_end_messages_match_the_clean_table(fixture_files):
     r = fake_redis()
     clock = FakeClock()
     summary = main(cli(fixture_files, "--speed", "600"), r=r,
@@ -395,3 +407,27 @@ def test_end_to_end_messages_match_the_parquet(fixture_files):
             else:
                 want = str(want)
             assert txn[name] == want, name
+
+
+def test_replays_real_cleaning_pipeline_output(tmp_path):
+    """Run scripts/clean_data.py on the pipeline test fixture, then replay its
+    output, so a change in the cleaning output format breaks this test."""
+    from scripts import clean_data
+    from tests.test_pipeline import good_rows, write_csv
+
+    out = tmp_path / "out"
+    raw = write_csv(tmp_path / "raw.csv", good_rows())
+    assert clean_data.main(["--input", str(raw), "--out", str(out)]) == 0
+    clean = read_clean_csv(out / "clean.csv")
+    splits = json.loads((out / "splits.json").read_text())
+    expected = clean[clean["ts"] >= pd.Timestamp(splits["test_start"])]
+
+    r = fake_redis()
+    summary = main(["--clean", str(out / "clean.csv"), "--splits", str(out / "splits.json"),
+                    "--speed", "0"], r=r)
+    assert summary["sent"] == len(expected) > 0
+    sent = [message_to_txn(f) for _id, f in r.xrange(bus.TXNS)]
+    assert [t["txn_id"] for t in sent] == expected["txn_id"].tolist()
+    assert [t["from_acct"] for t in sent] == expected["from_acct"].tolist()
+    assert [t["amount_usd"] for t in sent] == expected["amount_usd"].tolist()
+

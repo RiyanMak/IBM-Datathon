@@ -325,21 +325,29 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def read_clean_csv(path) -> pd.DataFrame:
+def read_clean_csv(path, columns=None) -> pd.DataFrame:
     """Read clean.csv (as written by scripts/clean_data.py) back with the same
     dtypes as the in-memory frame: int64 ids, datetime64[ns] ts, string accounts,
     category currencies/formats/split, float64 amounts, int8 label, bool flag.
 
     Text is read with na_filter=False so accounts such as "NA" stay text.
     Columns missing from the file (e.g. before splits are added) are skipped.
+    columns: read only these (in this order), leaving the rest on disk; every
+    one must be in the file.
     """
     present = set(pd.read_csv(path, nrows=0).columns)
+    if columns is not None:
+        missing = [c for c in columns if c not in present]
+        if missing:
+            raise ValueError(f"{path} has no column(s) {missing}")
+        present = set(columns)
     dtype = {c: STRING_DTYPE for c in _CSV_STRING_COLUMNS if c in present}
     dtype.update({c: str for c in (*_CSV_CATEGORY_COLUMNS, "split") if c in present})
     dtype.update({c: t for c, t in _CSV_NUMERIC_DTYPES.items() if c in present})
     # round_trip: the default float parser can be off by one ulp on some values;
     # this one reproduces the written floats exactly.
-    df = pd.read_csv(path, dtype=dtype, na_filter=False, float_precision="round_trip")
+    df = pd.read_csv(path, usecols=None if columns is None else list(columns), dtype=dtype,
+                     na_filter=False, float_precision="round_trip")
     if "ts" in present:
         df["ts"] = pd.to_datetime(df["ts"]).astype("datetime64[ns]")
     for c in _CSV_CATEGORY_COLUMNS:
@@ -348,7 +356,7 @@ def read_clean_csv(path) -> pd.DataFrame:
     if "split" in present:
         from common.splits import SPLIT_DTYPE
         df["split"] = df["split"].astype(SPLIT_DTYPE)
-    return df
+    return df if columns is None else df[list(columns)]
 
 
 # ---------------------------------------------------------------------------
