@@ -20,7 +20,12 @@ import platform
 
 import numpy as np
 import pandas as pd
-import pyarrow
+
+try:
+    import pyarrow
+    PYARROW_VERSION = pyarrow.__version__
+except ImportError:  # not available on the LinuxONE image; only reported, never required
+    PYARROW_VERSION = "not installed"
 
 from common.clean_transactions import DataValidationError
 from common.data_contract import CLEAN_COLUMN_ORDER, SPLIT_NAMES, USD
@@ -357,14 +362,14 @@ def fx_section(df, fx_json, consistency):
 def reload_section(reload_result):
     r = reload_result
     checks = [
-        make_check("Parquet reload equals in-memory frame", r["equals"],
-                   "pd.read_parquet(file).equals(frame)", pass_fail(r["equals"])),
-        make_check("Parquet dtypes identical", r["dtypes_identical"]
+        make_check("CSV reload equals in-memory frame", r["equals"],
+                   "read_clean_csv(file).equals(frame)", pass_fail(r["equals"])),
+        make_check("CSV reload dtypes identical", r["dtypes_identical"]
                    if not r["dtype_mismatches"] else f"False: {r['dtype_mismatches']}",
-                   "every column dtype unchanged", pass_fail(r["dtypes_identical"])),
-        make_check("Parquet file size", f"{fmt_int(r['file_bytes'])} bytes", "measured", INFO),
+                   "every column dtype restored", pass_fail(r["dtypes_identical"])),
+        make_check("CSV file size", f"{fmt_int(r['file_bytes'])} bytes", "measured", INFO),
     ]
-    return section("Parquet reload check", checks)
+    return section("CSV reload check", checks)
 
 
 def environment_info():
@@ -372,7 +377,7 @@ def environment_info():
         "python": platform.python_version(),
         "pandas": pd.__version__,
         "numpy": np.__version__,
-        "pyarrow": pyarrow.__version__,
+        "pyarrow": PYARROW_VERSION,
         "platform": platform.platform(),
     }
 
@@ -495,7 +500,7 @@ def render_failure_report(stage, error, provenance, timings, peak_memory_bytes):
     lines += [
         "**Overall status: FAILED**",
         "",
-        f"The run stopped at stage **{stage}**. No parquet or JSON output was written. "
+        f"The run stopped at stage **{stage}**. No CSV or JSON output was written. "
         "Nothing was auto-fixed: fix the input or the code and run again.",
         "",
         "## Failure details",

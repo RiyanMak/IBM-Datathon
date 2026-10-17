@@ -1,4 +1,4 @@
-"""Clean HI-Small_Trans.csv into one Parquet table plus JSON/Markdown reports.
+"""Clean HI-Small_Trans.csv into one typed CSV table plus JSON/Markdown reports.
 
 Usage (from the repo root):
 
@@ -7,12 +7,15 @@ Usage (from the repo root):
     python -m scripts.clean_data --input HI-Small_Trans.csv --out data/processed/sample_head --nrows 5000
 
 Outputs in --out:
-    clean.parquet (full mode) or clean_sample.parquet (sample modes)
+    clean.csv (full mode) or clean_sample.csv (sample modes)
     splits.json, fx_rates.json, data_quality.md
+
+The CSV keeps no column types, so read it back with
+common.clean_transactions.read_clean_csv, which restores them.
 
 If the data breaks the contract (bad values, missing exchange rates, splits
 that cannot be made) the run stops, writes data_quality.md with status FAILED
-and the details, writes no parquet/JSON, and exits with code 1.
+and the details, writes no CSV/JSON, and exits with code 1.
 Exit code 1 is also returned if a check in data_quality.md is FAIL (the files
 are then still written so they can be inspected). Exit code 2 means a usage
 problem (e.g. outputs already exist).
@@ -34,6 +37,7 @@ from common.clean_transactions import (
     DataValidationError,
     load_raw,
     normalize,
+    read_clean_csv,
     sort_and_assign_ids,
 )
 from common.data_contract import CLEAN_COLUMN_ORDER
@@ -61,12 +65,12 @@ class StageFailure(Exception):
 # Small helpers
 # ---------------------------------------------------------------------------
 
-def parquet_name(mode) -> str:
-    return "clean.parquet" if mode == "full" else "clean_sample.parquet"
+def csv_name(mode) -> str:
+    return "clean.csv" if mode == "full" else "clean_sample.csv"
 
 
 def output_names(mode) -> list:
-    return [parquet_name(mode), SPLITS_NAME, FX_NAME, REPORT_NAME]
+    return [csv_name(mode), SPLITS_NAME, FX_NAME, REPORT_NAME]
 
 
 def sha256_of_file(path) -> str:
@@ -211,8 +215,8 @@ def run_steps(input_path, nrows, sample_every, provenance, timer) -> dict:
 
 
 def reload_check(path, frame) -> dict:
-    """Read the parquet back and compare it with the in-memory frame."""
-    back = pd.read_parquet(path)
+    """Read the CSV back (with read_clean_csv) and compare it with the in-memory frame."""
+    back = read_clean_csv(path)
     mismatches = [c for c in frame.columns
                   if c not in back.columns or back[c].dtype != frame[c].dtype]
     if list(back.columns) != list(frame.columns):
@@ -292,11 +296,11 @@ def main(argv=None) -> int:
             return 1
 
         clean = result["clean"]
-        pq = parquet_name(mode)
-        with timer.stage("write_parquet"):
-            clean.to_parquet(tmp[pq], index=False)
+        csv = csv_name(mode)
+        with timer.stage("write_csv"):
+            clean.to_csv(tmp[csv], index=False)
         with timer.stage("reload_check"):
-            reload_result = reload_check(tmp[pq], clean)
+            reload_result = reload_check(tmp[csv], clean)
         with timer.stage("write_json"):
             write_json(tmp[SPLITS_NAME], result["splits_json"])
             write_json(tmp[FX_NAME], result["fx_json"])
@@ -317,7 +321,7 @@ def main(argv=None) -> int:
     status_line = next(line for line in text.splitlines() if line.startswith("**Overall status"))
     print(f"[clean_data] {status_line.replace('**', '')}")
     print(f"[clean_data] wrote {', '.join(str(final[n]) for n in names)}")
-    # A FAIL check in the report (e.g. the parquet reload check) is not a
+    # A FAIL check in the report (e.g. the CSV reload check) is not a
     # silent success: the files are kept for inspection but the exit code is 1.
     return 1 if status_line.startswith("**Overall status: FAIL") else 0
 

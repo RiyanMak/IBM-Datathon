@@ -76,7 +76,13 @@ def test_scalar_and_vectorized_helpers_agree():
     expected_banks = [canonical_bank(b) for b in banks]
     expected_ids = [make_account_id(b, a) for b, a in zip(banks, accts)]
 
-    for dtype in (object, "string", pd.StringDtype("pyarrow")):
+    dtypes = [object, "string"]
+    try:
+        import pyarrow  # noqa: F401
+        dtypes.append(pd.StringDtype("pyarrow"))
+    except ImportError:  # not on the LinuxONE image
+        pass
+    for dtype in dtypes:
         bank_s = pd.Series(banks, dtype=dtype)
         acct_s = pd.Series(accts, dtype=dtype)
         assert canonical_bank_series(bank_s).tolist() == expected_banks

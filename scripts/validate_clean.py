@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from common.clean_transactions import read_clean_csv
 from common.data_contract import CLEAN_COLUMN_ORDER, RAW_COLUMNS, SPLIT_NAMES, USD
 
 PASS = "PASS"
@@ -313,14 +314,14 @@ def check_raw(c, df, input_path, mode, nrows, sample_every, sha):
     c.start("Raw conservation")
     c.ok("Raw header", tuple(header) == RAW_COLUMNS, ",".join(header)[:60] + "...", "RAW_COLUMNS")
     c.add("Raw data rows in file", f"{total:,}", "counted with the csv module", INFO)
-    c.ok("Rows kept by the mode == parquet rows", kept == len(df), f"raw {kept:,} / parquet {len(df):,}",
+    c.ok("Rows kept by the mode == clean rows", kept == len(df), f"raw {kept:,} / clean {len(df):,}",
          "equal")
     pq_pos = int((df["label"] == 1).sum())
     pq_neg = int((df["label"] == 0).sum())
     c.ok("Label 1 count", raw_labels.get("1", 0) == pq_pos,
-         f"raw {raw_labels.get('1', 0):,} / parquet {pq_pos:,}", "equal")
+         f"raw {raw_labels.get('1', 0):,} / clean {pq_pos:,}", "equal")
     c.ok("Label 0 count", raw_labels.get("0", 0) == pq_neg,
-         f"raw {raw_labels.get('0', 0):,} / parquet {pq_neg:,}", "equal")
+         f"raw {raw_labels.get('0', 0):,} / clean {pq_neg:,}", "equal")
     if mode == "full":
         want = np.arange(total)
     elif mode == "stride_sample":
@@ -495,7 +496,7 @@ def check_reference_rates(c, path, fx, mode):
 
 
 def own_measurements(df, fx):
-    """The quantities Kevin reported, re-measured from the parquet."""
+    """The quantities Kevin reported, re-measured from the clean table."""
     paid = text_values(df["ccy_paid"])
     recv = text_values(df["ccy_recv"])
     label = df["label"].to_numpy()
@@ -597,9 +598,9 @@ def main(argv=None) -> int:
         fx = json.load(f)
     prov = splits["provenance"]
     mode, nrows, sample_every = prov["mode"], prov["nrows"], prov["sample_every"]
-    parquet = out_dir / ("clean.parquet" if mode == "full" else "clean_sample.parquet")
-    print(f"[validate] reading {parquet}", flush=True)
-    df = pd.read_parquet(parquet)
+    clean_csv = out_dir / ("clean.csv" if mode == "full" else "clean_sample.csv")
+    print(f"[validate] reading {clean_csv}", flush=True)
+    df = read_clean_csv(clean_csv)
 
     c = Checks()
     c.start("Inputs")
