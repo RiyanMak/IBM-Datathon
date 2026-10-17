@@ -32,15 +32,15 @@ Suggested output directory: `data/processed/v1/`, relative to the repository. Ac
 
 | Output | Purpose |
 | --- | --- |
-| `clean.parquet` | Canonical transactions with IDs, amounts, timestamps, labels, and splits |
-| `accounts_clean.parquet` | Separate account reference; avoid repeating names across millions of transfers |
+| `clean.csv` | Canonical transactions with IDs, amounts, timestamps, labels, and splits |
+| `accounts_clean.csv` | Separate account reference; avoid repeating names across millions of transfers |
 | `splits.json` | Derived time cutoffs, interval rules, counts, and source identity |
 | `fx_rates.json` | Frozen rates fitted on training rows, with support counts and provenance |
-| `patterns.parquet` | Evaluation-only pattern rows matched to canonical transaction IDs |
+| `patterns.csv` | Evaluation-only pattern rows matched to canonical transaction IDs |
 | `data_quality.md` | Checks actually run, measured results, unresolved issues, and limitations |
 | `cleaning_manifest.json` | Input hashes, schema/code version, environment, output paths, and completion status |
 
-Keep large raw/generated files out of Git. Track source code, documentation, and small synthetic test fixtures. Test a small Parquet write/read early. If the local environment cannot support it promptly, use the documented CSV fallback with explicit reload types and correct filenames in the manifest.
+Keep large raw/generated files out of Git. Track source code, documentation, and small synthetic test fixtures. Tables are written as CSV, not Parquet: the LinuxONE (s390x) image has no pyarrow. A CSV keeps no column types, so read tables back with `common.clean_transactions.read_clean_csv`, which restores them.
 
 ## 3. One owner, separate responsibilities in code
 
@@ -64,7 +64,7 @@ Locate the inputs, identify the existing interpreter and dependency versions, an
 
 Check memory use before the full run. The raw files total about 510 MB according to Kevin's reference, but strings, DataFrames, sorting, and temporary copies can use several times that. Run one large preparation job at a time. Chunked reading is useful for profiling and matching, but sorting each chunk and concatenating is NOT a global sort. If RAM is insufficient, use a documented disk-backed global ordering strategy.
 
-Do not publish a sample as `clean.parquet` for evaluation. Use an explicit sample filename and mark any sample-only transaction IDs as provisional. A sample taken from the final clean file should retain its global IDs.
+Do not publish a sample as `clean.csv` for evaluation. Use an explicit sample filename and mark any sample-only transaction IDs as provisional. A sample taken from the final clean file should retain its global IDs.
 
 ### Stage B: Normalize transaction records
 
@@ -228,7 +228,7 @@ The patterns file is incomplete ground truth: Kevin reports 3,209 of 5,177 posit
 
 Work with Aryan as the sole cleaning owner on his laptop. Explain each stage's inputs, transformations, outputs, and checks in plain English, then implement that stage in the existing repo. Use small examples so Aryan can understand the changes. Avoid one large unexplained script or unrelated services.
 
-First inspect the repository and input locations. Report what exists, what has already been implemented, and any missing input files. Read a small transaction sample and check the local environment and Parquet support. Compute file hashes without loading entire files into memory. Reuse completed work rather than starting over.
+First inspect the repository and input locations. Report what exists, what has already been implemented, and any missing input files. Read a small transaction sample and check the local environment. Compute file hashes without loading entire files into memory. Reuse completed work rather than starting over.
 
 Next implement the core transaction/split/FX/account workflow, verify it, and run it on the complete local input with a memory-conscious plan. Then finish patterns and final validation. Keep checkpoints visible; do not repeatedly ask for permission for routine changes already covered by this assignment. Raise a focused question only for a genuine unresolved data-contract conflict or missing required information.
 

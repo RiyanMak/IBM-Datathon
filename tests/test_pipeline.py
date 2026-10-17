@@ -8,6 +8,7 @@ import json
 import pandas as pd
 import pytest
 
+from common.clean_transactions import read_clean_csv
 from common.data_contract import CLEAN_COLUMN_ORDER
 from scripts import clean_data, validate_clean
 
@@ -52,11 +53,11 @@ def test_good_fixture_end_to_end(tmp_path):
     out = tmp_path / "out"
     assert run_clean(csv_path, out) == 0
 
-    for name in ("clean.parquet", "splits.json", "fx_rates.json", "data_quality.md"):
+    for name in ("clean.csv", "splits.json", "fx_rates.json", "data_quality.md"):
         assert (out / name).exists()
     assert not list(out.glob(".*.tmp"))  # no temporary files left behind
 
-    df = pd.read_parquet(out / "clean.parquet")
+    df = read_clean_csv(out / "clean.csv")
     assert tuple(df.columns) == CLEAN_COLUMN_ORDER
     assert len(df) == 40
     assert df["txn_id"].tolist() == list(range(40))
@@ -87,8 +88,8 @@ def test_stride_sample_writes_sample_files(tmp_path):
     out = tmp_path / "out"
     # Every row with an even source_row: still has Euro and Bitcoin evidence.
     assert run_clean(csv_path, out, "--sample-every", "2") == 0
-    assert (out / "clean_sample.parquet").exists()
-    assert not (out / "clean.parquet").exists()
+    assert (out / "clean_sample.csv").exists()
+    assert not (out / "clean.csv").exists()
     assert "SAMPLE RUN" in (out / "data_quality.md").read_text()
     assert validate_clean.main(["--out", str(out), "--input", str(csv_path)]) == 0
 
@@ -104,7 +105,7 @@ def test_bad_timestamp_fails_with_report(tmp_path):
     assert "FAILED" in report
     assert "normalize" in report
     assert "| 7 | 2022/13/01 00:07 |" in report  # source_row and the raw value
-    assert not (out / "clean.parquet").exists()
+    assert not (out / "clean.csv").exists()
     assert not (out / "splits.json").exists()
     assert not (out / "fx_rates.json").exists()
 
@@ -121,7 +122,7 @@ def test_currency_without_training_evidence_fails(tmp_path):
     assert "FAILED" in report
     assert "fx_fit" in report
     assert "Yen" in report
-    assert not (out / "clean.parquet").exists()
+    assert not (out / "clean.csv").exists()
     assert not (out / "fx_rates.json").exists()
 
 
@@ -129,10 +130,10 @@ def test_refuses_to_overwrite_without_flag(tmp_path):
     csv_path = write_csv(tmp_path / "good.csv", good_rows())
     out = tmp_path / "out"
     assert run_clean(csv_path, out) == 0
-    before = (out / "clean.parquet").stat().st_mtime_ns
+    before = (out / "clean.csv").stat().st_mtime_ns
 
     assert run_clean(csv_path, out) == 2
-    assert (out / "clean.parquet").stat().st_mtime_ns == before
+    assert (out / "clean.csv").stat().st_mtime_ns == before
 
     assert run_clean(csv_path, out, "--overwrite") == 0
 
@@ -142,10 +143,10 @@ def test_validator_detects_tampered_label(tmp_path):
     out = tmp_path / "out"
     assert run_clean(csv_path, out) == 0
 
-    df = pd.read_parquet(out / "clean.parquet")
+    df = read_clean_csv(out / "clean.csv")
     df.loc[0, "label"] = 1 - df.loc[0, "label"]  # flip one label, keep the dtype
     assert df["label"].dtype == "int8"
-    df.to_parquet(out / "clean.parquet", index=False)
+    df.to_csv(out / "clean.csv", index=False)
 
     assert validate_clean.main(["--out", str(out), "--input", str(csv_path)]) == 1
     assert "**Overall status: FAIL**" in (out / "validation.md").read_text()

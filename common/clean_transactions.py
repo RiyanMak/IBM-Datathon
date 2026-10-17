@@ -25,11 +25,24 @@ from common.data_contract import (
 )
 
 # String dtype used for text columns in the normalized frame.
-# We use the pyarrow-backed string dtype: for ~5M rows it stores the text in
-# compact Arrow buffers instead of one Python object per cell, so it needs far
-# less memory than the python-backed StringDtype, and it round-trips through
-# Parquet unchanged.
-STRING_DTYPE = pd.StringDtype("pyarrow")
+# The pyarrow-backed string dtype stores ~5M rows of text in compact Arrow
+# buffers instead of one Python object per cell, so it needs far less memory.
+# pyarrow is not available on the LinuxONE (s390x) image, so fall back to the
+# python-backed dtype there; the values and behaviour are the same.
+try:
+    import pyarrow  # noqa: F401
+    STRING_DTYPE = pd.StringDtype("pyarrow")
+except ImportError:
+    STRING_DTYPE = pd.StringDtype("python")
+
+# Columns of the clean table grouped by dtype, so clean.csv can be read back
+# with exactly the types normalize() produced (a CSV keeps no types itself).
+_CSV_STRING_COLUMNS = ("from_bank", "from_acct_raw", "from_acct", "to_bank", "to_acct_raw", "to_acct")
+# Category columns are built from plain str text (pandas' default), as normalize() does.
+_CSV_CATEGORY_COLUMNS = ("from_bank_raw", "to_bank_raw", "ccy_recv", "ccy_paid", "fmt")
+_CSV_NUMERIC_DTYPES = {"txn_id": "int64", "source_row": "int64", "amt_recv": "float64",
+                       "amt_paid": "float64", "amount_usd": "float64", "label": "int8",
+                       "self_transfer": "bool"}
 
 # Maximum number of example rows stored for each problem.
 MAX_EXAMPLES = 20
@@ -310,6 +323,32 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     out["self_transfer"] = (out["from_acct"] == out["to_acct"]).astype(bool)
 
     return out
+
+
+def read_clean_csv(path) -> pd.DataFrame:
+    """Read clean.csv (as written by scripts/clean_data.py) back with the same
+    dtypes as the in-memory frame: int64 ids, datetime64[ns] ts, string accounts,
+    category currencies/formats/split, float64 amounts, int8 label, bool flag.
+
+    Text is read with na_filter=False so accounts such as "NA" stay text.
+    Columns missing from the file (e.g. before splits are added) are skipped.
+    """
+    present = set(pd.read_csv(path, nrows=0).columns)
+    dtype = {c: STRING_DTYPE for c in _CSV_STRING_COLUMNS if c in present}
+    dtype.update({c: str for c in (*_CSV_CATEGORY_COLUMNS, "split") if c in present})
+    dtype.update({c: t for c, t in _CSV_NUMERIC_DTYPES.items() if c in present})
+    # round_trip: the default float parser can be off by one ulp on some values;
+    # this one reproduces the written floats exactly.
+    df = pd.read_csv(path, dtype=dtype, na_filter=False, float_precision="round_trip")
+    if "ts" in present:
+        df["ts"] = pd.to_datetime(df["ts"]).astype("datetime64[ns]")
+    for c in _CSV_CATEGORY_COLUMNS:
+        if c in present:
+            df[c] = df[c].astype("category")
+    if "split" in present:
+        from common.splits import SPLIT_DTYPE
+        df["split"] = df["split"].astype(SPLIT_DTYPE)
+    return df
 
 
 # ---------------------------------------------------------------------------

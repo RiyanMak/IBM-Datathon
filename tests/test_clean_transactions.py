@@ -10,6 +10,7 @@ from common.clean_transactions import (
     DataValidationError,
     load_raw,
     normalize,
+    read_clean_csv,
     read_header,
     validate_raw,
 )
@@ -343,13 +344,13 @@ def test_normalize_returns_new_frame(tmp_path):
     assert raw.equals(before)
 
 
-def test_parquet_round_trip(tmp_path):
+def test_csv_round_trip(tmp_path):
     rows = GOOD_ROWS + [make_row(3, amt="4197895233.69", label="1"),
                         make_row(4, from_acct="0080AB", amt="0.000004")]
     clean = normalize(load_raw(write_csv(tmp_path, rows)))
-    out = tmp_path / "clean.parquet"
-    clean.to_parquet(out, index=False)
-    reloaded = pd.read_parquet(out)
+    out = tmp_path / "clean.csv"
+    clean.to_csv(out, index=False)
+    reloaded = read_clean_csv(out)
     assert reloaded.equals(clean)
     assert (reloaded.dtypes == clean.dtypes).all()
     assert reloaded.loc[4, "from_acct_raw"] == "0080AB"

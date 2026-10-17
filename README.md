@@ -13,7 +13,7 @@ The cleaning pipeline turns `HI-Small_Trans.csv` into one typed, time-sorted tab
 
 Outputs (in the `--out` folder, e.g. `data/processed/`, which is git-ignored):
 
-- `clean.parquet`: every transaction with `txn_id`, account IDs, native amounts, `amount_usd`, label, `self_transfer` flag and `split` (train / validation / test by time). Sample runs write `clean_sample.parquet` instead.
+- `clean.csv`: every transaction with `txn_id`, account IDs, native amounts, `amount_usd`, label, `self_transfer` flag and `split` (train / validation / test by time). Sample runs write `clean_sample.csv` instead. Read it back with `common.clean_transactions.read_clean_csv`, which restores the column types (no parquet: the LinuxONE image has no pyarrow).
 - `splits.json`: the two time cutoffs, the split rules and per-split counts.
 - `fx_rates.json`: exchange rates (USD per unit) learned from the training rows only.
 - `data_quality.md`: measured checks, runtime, memory and limitations.
@@ -60,4 +60,4 @@ Redis host and stream names for every service come from `common/bus.py` (`REDIS_
 
 ## Libraries
 
-[pandas](https://pandas.pydata.org), [pyarrow](https://arrow.apache.org/docs/python/), [NumPy](https://numpy.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/).
+[pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/).

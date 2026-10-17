@@ -197,9 +197,9 @@ The case writer never reads the raw files, so the dependency is small. We are wa
 
 Needed:
 
-- `~/shared/data/clean.parquet` and `splits.json` exist, so the replayer can stream the test part.
+- `~/shared/data/clean.csv` and `splits.json` exist, so the replayer can stream the test part.
 - `~/shared/data/rates.json` produced by the shared script (D1), so test rings use the same dollar amounts as the scorer.
-- The account ID rule applied in `clean.parquet` exactly as `bank_without_leading_zeros + "_" + account`. The fact check's account regex (`\d+_[0-9A-Za-z]+`) depends on it.
+- The account ID rule applied in `clean.csv` exactly as `bank_without_leading_zeros + "_" + account`. The fact check's account regex (`\d+_[0-9A-Za-z]+`) depends on it.
 - Pair 1's two or three chosen demo attempts (one scatter-gather, one fan-out) with their start times, so `--start` on the replayer and the case-writer demo moments match.
 - Redis running in compose with no published port, and `common/bus.py` (A3) in place.
 
