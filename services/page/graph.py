@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 from services.page.models import RingView
 
 MAX_EDGES = 60   # bigger rings keep their largest transfers; the caption says so
+MAX_SIZE_IN = "10,6.5"   # Graphviz shrinks a bigger picture to fit (inches at 72 px); never enlarges
 
 ROLE_ORDER = ("key_account", "origin", "collector")   # fixed slot order, never cycled
 ROLE_TEXT = {
@@ -135,7 +136,7 @@ def build(ring: RingView, facts: Optional[dict] = None, theme: str = "light",
     lines = [
         "digraph ring {",
         '  graph [rankdir=LR, bgcolor="transparent", pad="0.2", nodesep="0.35", ranksep="0.9",'
-        ' fontname="%s"];' % FONT,
+        ' size="%s", fontname="%s"];' % (MAX_SIZE_IN, FONT),
         '  node [shape=box, style="rounded,filled", fontname="%s", fontsize=11, margin="0.15,0.07",'
         ' color="%s", fillcolor="%s", fontcolor="%s", penwidth=1];'
         % (FONT, t["node_line"], t["node_fill"], t["ink"]),

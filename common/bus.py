@@ -30,8 +30,13 @@ def redis_port() -> int:
     return int(os.environ.get("REDIS_PORT", "6379"))
 
 
-def connect():
-    """A redis-py client that returns text (not bytes) for every value."""
+def connect(**options):
+    """A redis-py client that returns text (not bytes) for every value.
+
+    Extra keyword options go straight to redis.Redis, e.g. the page passes a short
+    socket_connect_timeout so a down Redis shows a banner instead of a stall.
+    """
     import redis  # imported here so the cleaning scripts never need redis installed
 
-    return redis.Redis(host=redis_host(), port=redis_port(), decode_responses=True)
+    options.setdefault("decode_responses", True)
+    return redis.Redis(host=redis_host(), port=redis_port(), **options)

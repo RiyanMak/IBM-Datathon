@@ -284,3 +284,25 @@ def test_state_is_json_ready(r):
     r.xadd(bus.CASES, case_msg())
     json.dumps(state.load(r).to_dict())
     assert isinstance(PageState().to_dict(), dict)
+
+
+# --- display formatting ---------------------------------------------------------
+
+def test_md_escapes_markdown_and_maths():
+    from services.page import fmt
+    assert fmt.md("moved $29,350, got $10,000") == r"moved \$29,350, got \$10,000"
+    assert fmt.md("10_8000EBD30 *x* [a](b) <b>") == r"10\_8000EBD30 \*x\* \[a\](b) \<b\>"
+    assert fmt.md("a\\b") == "a\\\\b"
+    assert fmt.md("plain text 98%") == "plain text 98%"
+
+
+def test_display_formats():
+    from services.page import fmt
+    assert fmt.score(None) == fmt.DASH and fmt.score(0.931) == "0.93"
+    assert fmt.data_time("2022-09-08T14:00:00") == "2022-09-08 14:00"
+    assert fmt.span_hours("2022-09-08T14:00:00", "2022-09-08T18:44:00") == "4.7 h"
+    assert fmt.span_hours("x", "2022-09-08T18:44:00") == ""
+    assert fmt.wall_time("2026-10-17T21:30:01.396+00:00") == "2026-10-17 21:30 UTC"
+    assert fmt.wall_time("2026-10-17T10:00:00") == "2026-10-17 10:00"     # no zone: none shown
+    assert fmt.wall_time("garbage") == "garbage"
+    assert fmt.plural(1, "account") == "1 account" and fmt.plural(2, "account") == "2 accounts"

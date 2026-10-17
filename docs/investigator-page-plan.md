@@ -68,9 +68,11 @@ services/page/
   state.py         reads the streams, builds one PageState snapshot                     (no Streamlit)
   graph.py         ring -> Graphviz DOT text; key account and collector highlighted      (no Streamlit)
   decisions.py     writes a decision; reads the latest decision per ring                (no Streamlit)
+  fmt.py           display formatting and Markdown escaping                            (no Streamlit)
   app.py           the Streamlit page; thin; the ONLY file that imports streamlit
-  test_page.py     tests for models, state and decisions, using fakeredis
+  test_page.py     tests for models, state, decisions and fmt, using fakeredis
   test_graph.py    tests for the ring picture
+  test_app.py      renders app.py with Streamlit's AppTest against fakeredis
   fake/            everything that only exists for testing alone (section 6)
     __init__.py
     feed.py        pushes fake scored / rings / cases / decisions messages onto a Redis
@@ -175,7 +177,8 @@ Goal: when the real replayer, scorer and ring service are running, removing ever
 6. **Dockerfile base image** is still `<linuxone-jupyter-image>:<tag>`. Not a page task, but nothing runs in compose until it is filled in at hour 0.
 7. **Stream caps.** The replayer and scorer should write `txns` and `scored` with `MAXLEN ~ 200000` (case writer plan, D5). Once they do, `XLEN scored` undercounts the true total. For the demo that is acceptable; the top-bar label should say "recent" or the scorer should keep the `stats:scorer` counter (section 4).
 8. **Security points the page carries** for the judging table: port bound to `127.0.0.1`, SSH tunnel to view, container runs as `jovyan`, no secrets needed by the page at all (it has no `.env`).
-9. **No pandas in the page.** Keep the hot path to redis-py and plain dicts. Fewer moving parts on s390x and no accidental `st.dataframe` dependence on pyarrow if the Flask fallback is ever needed.
+9. **Escape every piece of data shown through Markdown.** Streamlit reads text between two `$` signs as a maths formula, so a summary with two dollar amounts turns into garbled maths. `fmt.md()` escapes summaries, reasons, notes and IDs before they reach `st.markdown`, captions, radio labels or badges. Any new panel must do the same.
+10. **No pandas in the page.** Keep the hot path to redis-py and plain dicts. Fewer moving parts on s390x and no accidental `st.dataframe` dependence on pyarrow if the Flask fallback is ever needed.
 
 ---
 
