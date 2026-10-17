@@ -1,0 +1,12 @@
+pandas
+pyarrow
+redis
+xgboost
+scikit-learn
+torch
+networkx
+streamlit
+flask
+graphviz
+ibm-watsonx-ai
+snapml

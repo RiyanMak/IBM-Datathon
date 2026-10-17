@@ -1,0 +1,57 @@
+# Services reach Redis at host name "redis". ~/shared on the VM is /data inside.
+#
+#   docker compose up -d --build
+#   docker compose ps
+#   docker compose logs -f scorer
+#   docker compose up -d --scale scorer=3
+#   docker compose down
+
+services:
+  redis:
+    image: docker.io/library/redis:7
+    # No published port on purpose.
+
+  replayer:
+    build: .
+    command: python -m services.replayer.main
+    environment:
+      - SPEED=${SPEED:-600}
+    volumes:
+      - ~/shared:/data
+    depends_on:
+      - redis
+
+  scorer:
+    build: .
+    command: python -m services.scorer.main
+    volumes:
+      - ~/shared:/data
+    depends_on:
+      - redis
+
+  rings:
+    build: .
+    command: python -m services.rings.main
+    volumes:
+      - ~/shared:/data
+    depends_on:
+      - redis
+
+  casewriter:
+    build: .
+    command: python -m services.casewriter.main
+    env_file: .env
+    volumes:
+      - ~/shared:/data
+    depends_on:
+      - redis
+
+  page:
+    build: .
+    command: streamlit run services/page/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ~/shared:/data
+    depends_on:
+      - redis
