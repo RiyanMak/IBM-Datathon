@@ -8,7 +8,7 @@ import json
 import pandas as pd
 import pytest
 
-from common.clean_transactions import read_clean_csv
+from common.clean_transactions import read_clean_csv, write_clean_csv
 from common.data_contract import CLEAN_COLUMN_ORDER
 from scripts import clean_data, validate_clean
 
@@ -146,7 +146,7 @@ def test_validator_detects_tampered_label(tmp_path):
     df = read_clean_csv(out / "clean.csv")
     df.loc[0, "label"] = 1 - df.loc[0, "label"]  # flip one label, keep the dtype
     assert df["label"].dtype == "int8"
-    df.to_csv(out / "clean.csv", index=False)
+    write_clean_csv(df, out / "clean.csv")
 
     assert validate_clean.main(["--out", str(out), "--input", str(csv_path)]) == 1
     assert "**Overall status: FAIL**" in (out / "validation.md").read_text()

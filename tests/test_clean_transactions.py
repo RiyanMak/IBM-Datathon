@@ -13,6 +13,7 @@ from common.clean_transactions import (
     read_clean_csv,
     read_header,
     validate_raw,
+    write_clean_csv,
 )
 from common.data_contract import CLEAN_NAMES
 
@@ -361,9 +362,37 @@ def test_csv_round_trip(tmp_path):
                         make_row(4, from_acct="0080AB", amt="0.000004")]
     clean = normalize(load_raw(write_csv(tmp_path, rows)))
     out = tmp_path / "clean.csv"
-    clean.to_csv(out, index=False)
+    write_clean_csv(clean, out)
     reloaded = read_clean_csv(out)
     assert reloaded.equals(clean)
     assert (reloaded.dtypes == clean.dtypes).all()
     assert reloaded.loc[4, "from_acct_raw"] == "0080AB"
     assert not math.isnan(reloaded.loc[4, "amt_recv"])
+
+
+def test_csv_round_trip_when_every_timestamp_is_midnight(tmp_path):
+    """Plain to_csv writes all-midnight chunks as dates only; the writer must not,
+    and the reader must accept both forms. (HI-Small starts with thousands of
+    rows at 2022-09-01 00:00, which is how this was found.)"""
+    rows = [make_row(i, ts="2022/09/01 00:00") for i in range(3)]
+    clean = normalize(load_raw(write_csv(tmp_path, rows)))
+    out = tmp_path / "clean.csv"
+    write_clean_csv(clean, out)
+    assert "2022-09-01T00:00:00" in out.read_text()
+    assert read_clean_csv(out).equals(clean)
+
+    # a file written by plain to_csv (date-only rows) still reads back correctly
+    clean.to_csv(out, index=False)
+    assert "2022-09-01," in out.read_text()
+    assert read_clean_csv(out)["ts"].equals(clean["ts"])
+
+
+def test_read_clean_csv_accepts_mixed_timestamp_forms(tmp_path):
+    rows = [make_row(0, ts="2022/09/01 00:00"), make_row(1, ts="2022/09/01 00:20")]
+    clean = normalize(load_raw(write_csv(tmp_path, rows)))
+    out = tmp_path / "clean.csv"
+    write_clean_csv(clean, out)
+    text = out.read_text().replace("2022-09-01T00:00:00", "2022-09-01").replace(
+        "2022-09-01T00:20:00", "2022-09-01 00:20:00")
+    out.write_text(text)
+    assert read_clean_csv(out)["ts"].tolist() == clean["ts"].tolist()

@@ -325,6 +325,19 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+TS_CSV_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+
+def write_clean_csv(df: pd.DataFrame, path) -> None:
+    """Write the clean table as CSV with every timestamp in one ISO format.
+
+    Without an explicit date_format pandas decides per chunk (a few thousand
+    rows) whether to write "2022-09-01" or "2022-09-01 00:20:00", so a chunk of
+    all-midnight rows (the start of HI-Small) produces a file with two formats.
+    """
+    df.to_csv(path, index=False, date_format=TS_CSV_FORMAT)
+
+
 def read_clean_csv(path, columns=None) -> pd.DataFrame:
     """Read clean.csv (as written by scripts/clean_data.py) back with the same
     dtypes as the in-memory frame: int64 ids, datetime64[ns] ts, string accounts,
@@ -349,7 +362,9 @@ def read_clean_csv(path, columns=None) -> pd.DataFrame:
     df = pd.read_csv(path, usecols=None if columns is None else list(columns), dtype=dtype,
                      na_filter=False, float_precision="round_trip")
     if "ts" in present:
-        df["ts"] = pd.to_datetime(df["ts"]).astype("datetime64[ns]")
+        # ISO8601 accepts "2022-09-01", "2022-09-01 00:20:00" and "2022-09-01T00:20:00"
+        # alike, so a file written by plain to_csv still reads correctly.
+        df["ts"] = pd.to_datetime(df["ts"], format="ISO8601").astype("datetime64[ns]")
     for c in _CSV_CATEGORY_COLUMNS:
         if c in present:
             df[c] = df[c].astype("category")
