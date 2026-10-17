@@ -39,6 +39,7 @@ from common.clean_transactions import (
     normalize,
     read_clean_csv,
     sort_and_assign_ids,
+    write_clean_csv,
 )
 from common.data_contract import CLEAN_COLUMN_ORDER
 from common.fx import MissingRateError, apply_rates, fit_rates, fx_consistency
@@ -298,7 +299,7 @@ def main(argv=None) -> int:
         clean = result["clean"]
         csv = csv_name(mode)
         with timer.stage("write_csv"):
-            clean.to_csv(tmp[csv], index=False)
+            write_clean_csv(clean, tmp[csv])
         with timer.stage("reload_check"):
             reload_result = reload_check(tmp[csv], clean)
         with timer.stage("write_json"):

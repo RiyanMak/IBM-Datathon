@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from common import bus
-from common.clean_transactions import read_clean_csv
+from common.clean_transactions import read_clean_csv, write_clean_csv
 from common.features import ClueBuilder
 from common.streams import (
     TXN_FIELDS,
@@ -100,7 +100,7 @@ def fixture_files(tmp_path):
     df["split"] = ["train"] * len(df)
     # Store the rows shuffled, so the replayer has to sort them itself.
     clean = tmp_path / "clean.csv"
-    df.sample(frac=1, random_state=1).to_csv(clean, index=False)
+    write_clean_csv(df.sample(frac=1, random_state=1), clean)
 
     splits = tmp_path / "splits.json"
     splits.write_text(json.dumps({
@@ -244,7 +244,7 @@ def test_works_without_a_label_column(tmp_path, fixture_files):
     # A file with no label column at all: reading label would crash.
     df = fixture_files["df"][list(TXN_COLUMNS)]
     path = tmp_path / "no_label.csv"
-    df.to_csv(path, index=False)
+    write_clean_csv(df, path)
     assert len(load_rows(str(path), datetime(2022, 9, 8, 16, 12))) == 6
 
 
@@ -270,7 +270,7 @@ def test_tied_timestamps_are_sorted_by_txn_id(tmp_path):
     df = make_rows(["2022-09-08T16:12:00"] * 3 + ["2022-09-08T16:13:00"])
     df = df.iloc[[2, 0, 3, 1]]           # stored out of order
     path = tmp_path / "c.csv"
-    df.to_csv(path, index=False)
+    write_clean_csv(df, path)
     rows = load_rows(str(path), datetime(2022, 9, 8, 16, 12))
     replay(r, rows, "t", speed=0)
     assert [int(f["txn_id"]) for _id, f in r.xrange("t")] == [0, 1, 2, 3]
@@ -360,7 +360,7 @@ def test_resume_continues_without_duplicates(tmp_path):
     r = fake_redis()
     df = make_rows(minutes("2022-09-08T16:12:00", 100))
     path = tmp_path / "clean.csv"
-    df.to_csv(path, index=False)
+    write_clean_csv(df, path)
     splits = tmp_path / "splits.json"
     splits.write_text(json.dumps({"test_start": TEST_START, "provenance": {"mode": "full"}}))
     args = ["--clean", str(path), "--splits", str(splits), "--speed", "0"]
