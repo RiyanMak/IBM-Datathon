@@ -1,5 +1,4 @@
 # Minimal environment for the transaction cleaning pipeline (common/clean_transactions.py) and its tests.
 pandas==3.0.6
 numpy==2.5.4
-pyarrow==26.0.0
 pytest==9.1.1

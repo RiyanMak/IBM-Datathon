@@ -1,7 +1,7 @@
 """Behaviour clues (features) for one bank transfer, computed from the past only.
 
 One class, used in two places so the clues can never drift apart:
-  * offline: loop over the whole clean table in time order to build features.parquet
+  * offline: loop over the whole clean table in time order to build features.csv
   * live:    inside the scorer, on each message from the txns stream
 
 The rule that makes this safe: compute the clues for a transfer FIRST, then add
