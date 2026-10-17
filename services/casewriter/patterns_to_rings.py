@@ -5,27 +5,54 @@ writer can be tested on real data before the ring service (step 4) is ready.
 It reads HI-Small_Patterns.txt (from the Kaggle dataset). Each block in that file
 is one known laundering attempt with its shape name and its transfers.
 
-Usage (from inside the casewriter folder):
-  python3 patterns_to_rings.py ~/shared/data/HI-Small_Patterns.txt real_rings.json
-  python3 casewriter.py --file real_rings.json
+Usage (from the repo root):
+  python -m services.casewriter.patterns_to_rings /data/HI-Small_Patterns.txt real_rings.json --rates data/processed/fx_rates.json
+  python -m services.casewriter.main --file real_rings.json
 
 Options:
   --limit 20        how many attempts to convert (default 20)
-  --rates FILE      a JSON file {"Euro": 1.17, ...} = US dollars per 1 unit of that
-                    currency (ask Pair 1 for their exchange-rate table). Without it,
-                    only attempts paid entirely in US Dollars are used.
+  --rates FILE      exchange rates, US dollars per 1 unit of each currency. Pass the
+                    fx_rates.json written by scripts/clean_data.py (learned on the
+                    training split only) so test rings and the scorer agree on every
+                    dollar amount. A flat {"Euro": 1.17, ...} file is accepted too.
+                    Defaults to /data/fx_rates.json if that file exists (the compose
+                    mount). Without rates, only attempts paid in US Dollars are used.
+
+Account IDs and dollar amounts follow the cleaning rules in common/data_contract.py
+and common/fx.py: "<bank without leading zeros>_<account>" and
+amount_usd = Amount Paid * rate[Payment Currency].
 
 Note: these rings have no model scores yet (XGBoost/GNN aren't trained), so the
 summaries will skip the score sentences. That's expected.
 """
 import argparse
 import json
+import os
 from datetime import datetime
+
+from common.data_contract import make_account_id
+
+DEFAULT_PATTERNS = "/data/HI-Small_Patterns.txt"
+DEFAULT_RATES = "/data/fx_rates.json"
 
 
 def account_id(bank, account):
     """Team rule: bank number without leading zeros + '_' + account, e.g. 10_8000EBD30."""
-    return "%s_%s" % (str(int(bank)), account.strip())
+    return make_account_id(bank, account.strip())
+
+
+def load_rates(path):
+    """Read exchange rates as {currency: USD per unit}.
+
+    Accepts the cleaning pipeline's fx_rates.json ({"rates": {ccy: {"rate": x, ...}}})
+    and a flat {ccy: x} file.
+    """
+    with open(path) as fh:
+        data = json.load(fh)
+    if isinstance(data, dict) and isinstance(data.get("rates"), dict):
+        return {ccy: float(info["rate"]) if isinstance(info, dict) else float(info)
+                for ccy, info in data["rates"].items()}
+    return {ccy: float(x) for ccy, x in data.items()}
 
 
 def read_attempts(path):
@@ -89,12 +116,13 @@ def to_ring(index, shape, rows, rates):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("patterns_file")
-    p.add_argument("out_file")
+    p.add_argument("patterns_file", nargs="?", default=DEFAULT_PATTERNS)
+    p.add_argument("out_file", nargs="?", default="real_rings.json")
     p.add_argument("--limit", type=int, default=20)
-    p.add_argument("--rates")
+    p.add_argument("--rates", default=DEFAULT_RATES if os.path.exists(DEFAULT_RATES) else None,
+                   help="fx_rates.json from scripts/clean_data.py (or a flat {currency: rate} file)")
     args = p.parse_args()
-    rates = json.load(open(args.rates)) if args.rates else {}
+    rates = load_rates(args.rates) if args.rates else {}
 
     rings, seen, skipped = [], 0, 0
     for shape, rows in read_attempts(args.patterns_file):

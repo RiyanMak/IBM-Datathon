@@ -17,6 +17,7 @@ SHAPE_TEXT = {
     "bipartite": "one group of accounts sent money to a second group of accounts",
     "stack": "money moved through layers of accounts, each group paying the next",
     "random": "money moved through an irregular chain of accounts",
+    "other": "money moved between a connected group of accounts in no single recognised pattern",
 }
 UNKNOWN_SHAPE_TEXT = "money moved quickly between a connected group of accounts"
 
@@ -37,7 +38,10 @@ def when(iso_text):
 
 
 def shape_label(shape):
-    return shape if shape in SHAPE_TEXT else "unusual"
+    """Shape name with its article, for "consistent with {shape_label} laundering pattern"."""
+    if shape in SHAPE_TEXT and shape != "other":
+        return "a " + shape
+    return "an unusual"
 
 
 def behaviour_signals(f):
@@ -76,7 +80,7 @@ def template_summary(f):
     key = f["key_account"]
 
     # 1. summary (2 sentences)
-    s1 = "{n} accounts moved {total} in {t} transfers between {a} and {b}, activity consistent with a {shape} laundering pattern.".format(
+    s1 = "{n} accounts moved {total} in {t} transfers between {a} and {b}, activity consistent with {shape} laundering pattern.".format(
         n=f["n_accounts"], total=money(f["total_usd"]), t=f["n_transfers"],
         a=when(f["first_seen"]), b=when(f["last_seen"]), shape=shape_label(f["shape"]))
     if f["passed_on_pct"] is not None and f["hours_to_pass_on"] is not None:

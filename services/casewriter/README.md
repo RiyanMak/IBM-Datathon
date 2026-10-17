@@ -27,60 +27,57 @@ Our code computes every number. Granite only rewords them, and the fact check th
 | `casewriter.py` | Ties everything together; runs on a file or on Redis | No |
 | `fake_rings.json` | 3 hand-made rings (scatter-gather, fan-out, cycle) for testing | Add more if you like |
 | `patterns_to_rings.py` | Turns real laundering attempts from the dataset into rings, for testing on real data | No |
-| `make_rates.py` | Builds currency exchange rates from the dataset, so non-dollar attempts can be used | No |
-| `test_casewriter.py` | 14 automatic checks | No |
-| `requirements.txt`, `Dockerfile` | For the VM and for Pair 3's containers | No |
-| `.env.example`, `.gitignore` | Settings template; keeps your API key out of GitHub | Copy `.env.example` to `.env` |
+| `main.py` | What `docker compose` runs: `python -m services.casewriter.main` | No |
+| `test_casewriter.py` | 16 automatic checks | No |
 
-The last two files start with a dot, so they're hidden. In Finder press **Cmd + Shift + .** to see them, or run `ls -a` in Terminal.
+Shared with the other services (not in this folder): `common/bus.py` (Redis host and stream names), the root `requirements.txt`, `Dockerfile`, `docker-compose.yml` and `.env.example`. Copy the root `.env.example` to `.env` for your watsonx settings; `.env` is git-ignored.
+
+Exchange rates come from the cleaning pipeline: `data/processed/fx_rates.json`, written by `python -m scripts.clean_data` (see the root README). That is the team's only rate table.
 
 This piece never reads the Kaggle files. It only reads rings, so the dataset choice (HI-Small) doesn't affect it.
 
+**Every command below runs from the repo root**, not from inside this folder.
+
 ---
 
-## Step 1: Put the folder in the team repo and commit it (5 min)
+## Step 1: Get the code (2 min)
 
-1. Unzip `casewriter.zip` into the top level of your local copy of the team repo, so you have `<repo>/casewriter/`.
-2. In Terminal:
-   ```
-   cd path/to/your/repo
-   git pull
-   git add casewriter
-   git commit -m "Case writer: facts pack, template, fact check, Granite call, Redis service"
-   git push
-   ```
-3. Check on GitHub that `casewriter/` is there and that there is **no `.env` file** in it (only `.env.example`).
+```
+cd path/to/your/repo
+git pull
+python3 -m pip install -r requirements.txt
+```
+The case writer is in `services/casewriter/`. Check that there is **no `.env` file** committed anywhere (only `.env.example` at the repo root).
 
 ## Step 2: Run the tests on your Mac (2 min)
 
 ```
-cd casewriter
-python3 test_casewriter.py
+python3 -m pytest -q services/casewriter
 ```
-Every line should say `PASS`, ending with `All tests passed.` One test may say `SKIP` (it needs `fakeredis`). That's fine.
+or, for the one-line-per-test view:
+```
+python3 -m services.casewriter.test_casewriter
+```
+Every line should say `PASS`, ending with `All tests passed.` One test may say `SKIP` (it needs `fakeredis`). That's fine. `python3 -m pytest -q` at the repo root runs these together with the cleaning tests.
 
 Rerun this after **every** edit you make. If something says `FAIL`, your edit broke a rule. Undo it or ask.
 
 ## Step 3: See what the cases look like (2 min)
 
 ```
-python3 casewriter.py --file fake_rings.json
+python3 -m services.casewriter.main --file services/casewriter/fake_rings.json
 ```
 This prints the 3 fake rings as finished cases. Each one has 5 parts: `summary`, `what_happened`, `why_suspicious`, `possible_victim`, `suggested_next_step`. That output is exactly what the investigator page will show.
 
 ## Step 3b: Test on REAL laundering attempts from the dataset (10 min)
 
-The fake rings are made up. To test on real data before the ring service exists, convert real attempts from the dataset's patterns file into rings. Run this on the VM once Pair 1 has downloaded the data to `~/shared/data/`:
+The fake rings are made up. To test on real data before the ring service exists, convert real attempts from the dataset's patterns file into rings. Run this once the cleaning pipeline has produced `fx_rates.json` (root README, "Data cleaning"):
 ```
-python3 patterns_to_rings.py ~/shared/data/HI-Small_Patterns.txt real_rings.json
-python3 casewriter.py --file real_rings.json
+python3 -m services.casewriter.patterns_to_rings ~/Downloads/HI-Small_Patterns.txt real_rings.json --rates data/processed/fx_rates.json --limit 40
+python3 -m services.casewriter.main --file real_rings.json
 ```
-- Only attempts paid entirely in US Dollars are used, unless you pass exchange rates with `--rates rates.json`. To build the rates yourself from the main transaction file (same method as the team guide's cleaning rule 4):
-  ```
-  python3 make_rates.py ~/Downloads/HI-Small_Trans.csv rates.json
-  python3 patterns_to_rings.py ~/Downloads/HI-Small_Patterns.txt real_rings.json --rates rates.json --limit 40
-  ```
-  Share `rates.json` with Pair 1 so everyone uses the same numbers.
+- Without `--rates`, only attempts paid entirely in US Dollars are used. Inside the containers the defaults are `/data/HI-Small_Patterns.txt` and `/data/fx_rates.json`, so both arguments can be left out there.
+- The rates are learned from the training split only, by the same code the scorer uses, so test rings and the scorer agree on every dollar amount. Do not build a second rate table.
 - These rings have no model scores yet, so the score sentences are skipped. That's expected.
 - Read 5–10 of the summaries. Do they make sense for the shape? Do the amounts look right? Note any that read badly, and fix the wording in step 4.
 - Pick 2–3 that read well as **demo moments** for the video. The team guide says Pair 1 should pick demo attempts, so share yours with them.
@@ -95,7 +92,7 @@ Open `template.py` in any text editor (VS Code or TextEdit in plain-text mode).
   1. Only use numbers from the facts (the `f[...]` values). Never type a number into a sentence.
   2. Say "activity consistent with", never "criminal", "guilty" or "fraudster".
   3. The key account is treated as a **possible victim** (a recruited mule). That's our student angle.
-- Save, then run `python3 test_casewriter.py` again. Commit when it passes.
+- Save, then run `python3 -m pytest -q services/casewriter` again. Commit when it passes.
 
 The terms the template uses, so you can explain them to judges:
 
@@ -120,15 +117,14 @@ Paste this in the team chat so Pair 2 (rings) and Pair 3 (page) build to the sam
 ## Step 6: Connect Granite (when you have credentials)
 
 1. **Get the details.** You need an API key, project ID and region URL. Ask in the Discord IBM channel, or check how the mandatory "Predictive AI + Generative AI" lab connects. **The guide says to use the lab's method.** If the lab uses a different method from `granite.py`, only the inside of `call_granite()` needs replacing.
-2. **Make your settings file:**
+2. **Make your settings file** (at the repo root):
    ```
    cp .env.example .env
    ```
-   Open `.env` and paste in the real values. Also confirm the model ID. Granite model names change, so check which ones your watsonx project lists.
+   Open `.env` and paste in the real values (`WATSONX_APIKEY`, `WATSONX_PROJECT_ID`, `WATSONX_URL`, `GRANITE_MODEL_ID`). Granite model names change, so check which ones your watsonx project lists.
 3. **Test it:**
    ```
-   python3 -m pip install requests
-   python3 casewriter.py --file fake_rings.json
+   python3 -m services.casewriter.main --file services/casewriter/fake_rings.json
    ```
    Each ring now prints `source: granite` or `source: template` with a reason. The last line, `Granite passed the fact check in X of Y tries`, goes in the pitch.
 4. **If it always says `granite error`,** read the error text. A `401` means the key is wrong, `404` means a wrong URL or model ID, and a timeout means the VM can't reach watsonx (ask Pair 3). The template still works, so nothing is blocked.
@@ -137,13 +133,11 @@ I couldn't test the real Granite connection from here, only the request format. 
 
 ## Step 7: Run it on the VM with Redis (once Pair 3 has Redis up)
 
-On the LinuxONE VM, inside the repo folder:
+On the LinuxONE VM, at the repo root:
 ```
-cd casewriter
-python3 -m pip install -r requirements.txt
-export REDIS_HOST=localhost          # or whatever Pair 3 tells you
-python3 casewriter.py --push-fake fake_rings.json   # put 3 fake rings on the stream
-python3 casewriter.py --redis                       # start the service
+export REDIS_HOST=localhost          # outside docker compose; inside it the default "redis" is right
+python3 -m services.casewriter.main --push-fake services/casewriter/fake_rings.json   # put 3 fake rings on the stream
+python3 -m services.casewriter.main                                                   # start the service
 ```
 You should see `case for R-0001 v1 (template)` and so on. Press **Ctrl + C** to stop. To check what landed on `cases`:
 ```
@@ -153,19 +147,13 @@ redis-cli XRANGE cases - +
 
 This proves your piece works before Pair 2's real rings exist. When their ring service is running, the same `--redis` command picks up real rings automatically.
 
-## Step 8: Hand it to Pair 3 for the containers
+## Step 8: Run it in the shared containers
 
-Tell Pair 3 there's a `Dockerfile` in `casewriter/`, and give them this block for `docker-compose.yml`:
-```yaml
-  casewriter:
-    build: ./casewriter
-    env_file: ./casewriter/.env
-    environment:
-      - REDIS_HOST=redis
-    depends_on: [redis]
-    restart: unless-stopped
+The root `docker-compose.yml` already has a `casewriter` service that runs `python -m services.casewriter.main` from the shared image, with `.env` passed in and Redis reachable as `redis`:
 ```
-If the team builds everything from the LinuxONE Jupyter image instead, they reuse the last three lines of the Dockerfile.
+docker compose up -d --build casewriter
+docker compose logs -f casewriter      # expect: case writer listening on 'rings'
+```
 
 ## Step 9: Done when (from the team guide)
 
@@ -185,9 +173,9 @@ If the team builds everything from the LinuxONE Jupyter image instead, they reus
 | What you see | What it means | Fix |
 |---|---|---|
 | `python3: command not found` | Python isn't installed on your Mac | Run `xcode-select --install`, or just use the VM |
-| `ModuleNotFoundError: redis` / `requests` | Library not installed | `python3 -m pip install -r requirements.txt` |
-| `No such file: fake_rings.json` | You're in the wrong folder | `cd casewriter` first |
+| `ModuleNotFoundError: redis` / `requests` | Library not installed | `python3 -m pip install -r requirements.txt` at the repo root |
+| `ModuleNotFoundError: services` / `common` | You're not at the repo root | `cd` to the repo root; always run `python3 -m services.casewriter...` from there |
 | A test says `FAIL` after you edited the wording | A sentence now contains a number that isn't from the facts, or a part is empty | Undo the last change; use `{...}` placeholders for numbers |
 | `skipped bad ring message ... Unrecognised edge` | Pair 2 sends edges in a different format | Ask them for one example message and post it in the team chat |
-| `Connection refused` on Redis | Redis isn't running or `REDIS_HOST` is wrong | Ask Pair 3 for the host name |
+| `Connection refused` on Redis | Redis isn't running or `REDIS_HOST` is wrong | Inside compose it is `redis` (default); on a laptop `export REDIS_HOST=localhost` |
 | `source: template, granite error: 401` | Wrong API key | Re-copy the key into `.env` |

@@ -1,16 +1,20 @@
 """
-Tests for the case writer. Run from inside the casewriter folder:
-    python3 test_casewriter.py
+Tests for the case writer. Run from the repo root, either way:
+    python -m pytest -q services/casewriter
+    python -m services.casewriter.test_casewriter
 Every line should say PASS. No internet, Redis or Granite needed.
 """
 import json
+from pathlib import Path
 
-from facts import parse_ring, build_facts
-from template import template_summary, REQUIRED_KEYS
-from factcheck import check_reply
-from casewriter import write_case, ring_to_stream_fields, Stats
+from services.casewriter.facts import parse_ring, build_facts
+from services.casewriter.template import template_summary, REQUIRED_KEYS
+from services.casewriter.factcheck import check_reply
+from services.casewriter.casewriter import write_case, ring_to_stream_fields, Stats
 
-with open("fake_rings.json") as fh:
+FAKE_RINGS = Path(__file__).with_name("fake_rings.json")
+
+with open(FAKE_RINGS) as fh:
     RINGS = json.load(fh)
 
 
@@ -162,11 +166,15 @@ def test_redis_end_to_end():
     try:
         import fakeredis
     except ImportError:
-        print("SKIP  test_redis_end_to_end (pip install fakeredis to run it)")
-        return "skip"
-    from casewriter import push_fake, run_redis
+        try:
+            import pytest
+            pytest.skip("pip install fakeredis to run it")
+        except ImportError:
+            print("SKIP  test_redis_end_to_end (pip install fakeredis to run it)")
+            return "skip"
+    from services.casewriter.casewriter import push_fake, run_redis
     r = fakeredis.FakeRedis(decode_responses=True)
-    push_fake("fake_rings.json", r)
+    push_fake(str(FAKE_RINGS), r)
     run_redis(use_granite=False, r=r, max_loops=1)
     cases = r.xrange("cases")
     assert len(cases) == 3
@@ -184,6 +192,9 @@ if __name__ == "__main__":
                 failed += 1
                 print("FAIL ", name, "-", exc)
             except Exception as exc:
+                if type(exc).__name__ == "Skipped":   # pytest.skip() when run as a script
+                    print("SKIP ", name, "-", exc)
+                    continue
                 failed += 1
                 print("ERROR", name, "-", repr(exc))
     print("\nAll tests passed." if not failed else "\n%d test(s) failed." % failed)

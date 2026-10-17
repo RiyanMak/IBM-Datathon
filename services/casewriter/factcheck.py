@@ -13,7 +13,7 @@ import math
 import re
 from datetime import datetime
 
-from template import REQUIRED_KEYS
+from services.casewriter.template import REQUIRED_KEYS
 
 ACCOUNT_RE = re.compile(r"\b\d+_[0-9A-Za-z]+\b")
 DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?\b")

@@ -1,7 +1,7 @@
 .env
-HI-Small_trans.csv 
 .venv/
 __pycache__/
+*.pyc
 .pytest_cache/
 data/
 HI-Small_*.csv

@@ -10,3 +10,5 @@ flask
 graphviz
 ibm-watsonx-ai
 snapml
+requests
+pytest

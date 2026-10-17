@@ -38,10 +38,26 @@ Run from the repo root:
 # independent check of the outputs (optionally against a rounded rates file)
 .venv/bin/python -m scripts.validate_clean --out data/processed --input HI-Small_Trans.csv --reference-rates path/to/rates.json
 
-# tests
+# tests (cleaning + case writer)
 .venv/bin/python -m pytest -q
 ```
 
 Add `--overwrite` to replace existing outputs. `--nrows N` (the first N rows) also works, but the start of the file has no exchange-rate evidence for some currencies, so it fails on purpose.
 
-Libraries used: [pandas](https://pandas.pydata.org), [pyarrow](https://arrow.apache.org/docs/python/), [NumPy](https://numpy.org) and [pytest](https://docs.pytest.org).
+## Case writer
+
+Turns each ring from the `rings` Redis stream into a short plain-English case on the `cases` stream. Code computes every number into a facts pack; Granite (watsonx.ai) only rewords it, and a fact check rejects any reply with an invented number, account or date, falling back to a template. Lives in `services/casewriter/`, see its README.
+
+```bash
+# print cases for the 3 fake rings, no Redis or Granite needed
+python -m services.casewriter.main --file services/casewriter/fake_rings.json
+
+# the service (what docker compose runs): reads `rings`, writes `cases`
+python -m services.casewriter.main
+```
+
+Redis host and stream names for every service come from `common/bus.py` (`REDIS_HOST`, default `redis` inside compose). Watsonx settings come from `.env` (copy `.env.example`). `data/processed/fx_rates.json` from the cleaning run is the team's only exchange-rate table; `patterns_to_rings.py` reads it so test rings and the scorer agree on every dollar amount.
+
+## Libraries
+
+[pandas](https://pandas.pydata.org), [pyarrow](https://arrow.apache.org/docs/python/), [NumPy](https://numpy.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/).

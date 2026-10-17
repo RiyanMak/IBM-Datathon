@@ -1,5 +1,0 @@
-# Case writer (step 5). Add both to the README "Libraries" list:
-#   redis-py  https://github.com/redis/redis-py
-#   requests  https://requests.readthedocs.io
-redis
-requests

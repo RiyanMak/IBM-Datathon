@@ -3,28 +3,30 @@ Step 5 - the case writer service.
 
 Reads rings from the Redis stream `rings`, writes cases to the stream `cases`.
 
-How to run (from inside the casewriter folder):
-  python3 casewriter.py --file fake_rings.json     # no Redis needed: prints cases
-  python3 casewriter.py --push-fake fake_rings.json  # put fake rings on Redis (testing)
-  python3 casewriter.py --redis                    # the real service
+How to run (from the repo root):
+  python -m services.casewriter.main --file services/casewriter/fake_rings.json       # no Redis: prints cases
+  python -m services.casewriter.main --push-fake services/casewriter/fake_rings.json  # put fake rings on Redis
+  python -m services.casewriter.main                                                   # the real service (same as --redis)
+
+Redis host and stream names come from common/bus.py (REDIS_HOST, default "redis").
 
 Granite is used automatically when the watsonx settings exist (see granite.py).
 Add --no-granite to force the template.
 """
 import argparse
 import json
-import os
 import socket
 import sys
 from datetime import datetime
 
-from facts import parse_ring, build_facts
-from template import template_summary
-from factcheck import check_reply
-import granite
+from common import bus
+from services.casewriter.facts import parse_ring, build_facts
+from services.casewriter.template import template_summary
+from services.casewriter.factcheck import check_reply
+from services.casewriter import granite
 
-IN_STREAM = "rings"
-OUT_STREAM = "cases"
+IN_STREAM = bus.RINGS
+OUT_STREAM = bus.CASES
 GROUP = "casewriter"
 
 
@@ -100,10 +102,7 @@ def run_file(path, use_granite):
 
 
 def connect_redis():
-    import redis
-    return redis.Redis(host=os.environ.get("REDIS_HOST", "localhost"),
-                       port=int(os.environ.get("REDIS_PORT", "6379")),
-                       decode_responses=True)
+    return bus.connect()
 
 
 def push_fake(path, r=None):
@@ -149,7 +148,8 @@ def main():
     p = argparse.ArgumentParser(description="Mule Ring Hunter case writer")
     p.add_argument("--file", help="read fake rings from a JSON file and print the cases")
     p.add_argument("--push-fake", help="push fake rings from a JSON file onto Redis")
-    p.add_argument("--redis", action="store_true", help="run the real service on Redis")
+    p.add_argument("--redis", action="store_true",
+                   help="run the real service on Redis (the default when no option is given)")
     p.add_argument("--no-granite", action="store_true", help="always use the template")
     args = p.parse_args()
 
@@ -158,10 +158,9 @@ def main():
         run_file(args.file, use_granite)
     elif args.push_fake:
         push_fake(args.push_fake)
-    elif args.redis:
-        run_redis(use_granite)
     else:
-        p.print_help()
+        # --redis, or no option at all: docker compose runs the module with no arguments.
+        run_redis(use_granite)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,6 @@ import argparse
 import hashlib
 import json
 import os
-import resource
 import sys
 import time
 from contextlib import contextmanager
@@ -80,10 +79,15 @@ def sha256_of_file(path) -> str:
 
 
 def peak_memory_bytes() -> int:
-    """Peak resident memory of this process so far.
+    """Peak resident memory of this process so far, or 0 if unknown.
 
-    ru_maxrss is in bytes on macOS but in KiB on Linux.
+    The `resource` module only exists on Linux and macOS. ru_maxrss is in
+    bytes on macOS but in KiB on Linux. On Windows the report says 0 bytes.
     """
+    try:
+        import resource
+    except ImportError:  # Windows
+        return 0
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return int(rss) if sys.platform == "darwin" else int(rss) * 1024
 

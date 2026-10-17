@@ -10,7 +10,7 @@ replace only the body of call_granite() - everything else stays the same.
 
 Settings come from environment variables (put them in a .env file that is
 NEVER committed - it is listed in .gitignore):
-  WATSONX_APIKEY       your IBM Cloud API key
+  WATSONX_APIKEY       your IBM Cloud API key (WATSONX_API_KEY is accepted too)
   WATSONX_PROJECT_ID   your watsonx project ID
   WATSONX_URL          region URL, e.g. https://us-south.ml.cloud.ibm.com
   GRANITE_MODEL_ID     the Granite model available to you (ask the organizers / check the lab)
@@ -47,8 +47,13 @@ def load_env_file(path=".env"):
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def api_key():
+    """The IBM Cloud API key under either spelling the team has used."""
+    return os.environ.get("WATSONX_APIKEY") or os.environ.get("WATSONX_API_KEY") or ""
+
+
 def granite_configured():
-    return all(os.environ.get(k) for k in ("WATSONX_APIKEY", "WATSONX_PROJECT_ID", "WATSONX_URL"))
+    return bool(api_key()) and all(os.environ.get(k) for k in ("WATSONX_PROJECT_ID", "WATSONX_URL"))
 
 
 def build_messages(facts):
@@ -72,7 +77,7 @@ def _iam_token(api_key):
 def call_granite(facts):
     """Send the facts to Granite and return its raw reply text."""
     import requests
-    token = _iam_token(os.environ["WATSONX_APIKEY"])
+    token = _iam_token(api_key())
     url = os.environ["WATSONX_URL"].rstrip("/") + "/ml/v1/text/chat?version=" + API_VERSION
     body = {
         "model_id": os.environ.get("GRANITE_MODEL_ID", DEFAULT_MODEL_ID),

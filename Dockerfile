@@ -4,6 +4,8 @@
 FROM <linuxone-jupyter-image>:<tag>
 
 WORKDIR /app
+# Print log lines as they happen, so `docker compose logs -f` shows them.
+ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
