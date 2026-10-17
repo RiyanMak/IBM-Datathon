@@ -65,6 +65,18 @@ def test_reset_refuses_on_real_data(r):
     assert r.xlen(bus.RINGS) == 1
 
 
+def test_reset_allows_page_decisions_on_fake_rings(r):
+    # A decision clicked on the page has a normal note, but its ring is fake.
+    r.xadd(bus.DECISIONS, {"ring_id": "R-0001", "version": "1", "decision": "freeze",
+                           "note": "looks like a mule", "decided_at": "x"})
+    assert feed.reset(r) is True
+
+
+def test_reset_refuses_decisions_on_real_rings(r):
+    r.xadd(bus.DECISIONS, {"ring_id": "R-4242", "decision": "freeze", "note": "", "decided_at": "x"})
+    assert feed.reset(r) is False
+
+
 def test_reset_clears_fake_data(r):
     rings = feed.load_rings(feed.RINGS_FILE)
     feed.push_cases(r, rings)

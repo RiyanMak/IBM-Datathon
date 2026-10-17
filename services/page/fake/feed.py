@@ -182,7 +182,8 @@ def find_real_data(r, sample=1000):
         (bus.SCORED, "txn_id", FAKE_TXN_PREFIX),
         (bus.RINGS, "ring_id", FAKE_RING_PREFIXES),
         (bus.CASES, "ring_id", FAKE_RING_PREFIXES),
-        (bus.DECISIONS, "note", FAKE_NOTE_PREFIX),
+        # By ring, not by note: decisions clicked on the page for a fake ring are test data too.
+        (bus.DECISIONS, "ring_id", FAKE_RING_PREFIXES),
     ]
     for stream, field, prefix in checks:
         for _id, fields in r.xrevrange(stream, "+", "-", count=sample):

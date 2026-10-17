@@ -109,6 +109,8 @@ def percentile(values: List[float], pct: float) -> Optional[float]:
 
 def _bad(snap: PageState, stream: str, msg_id: str, exc: Exception):
     snap.skipped[stream] = snap.skipped.get(stream, 0) + 1
+    if len(_logged_bad) > 10_000:   # the page runs for days; keep the memory bounded
+        _logged_bad.clear()
     if (stream, msg_id) not in _logged_bad:
         _logged_bad.add((stream, msg_id))
         log.warning("skipped bad %s message %s: %s", stream, msg_id, exc)

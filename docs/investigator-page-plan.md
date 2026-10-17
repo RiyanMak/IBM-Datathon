@@ -69,7 +69,8 @@ services/page/
   graph.py         ring -> Graphviz DOT text; key account and collector highlighted      (no Streamlit)
   decisions.py     writes a decision; reads the latest decision per ring                (no Streamlit)
   app.py           the Streamlit page; thin; the ONLY file that imports streamlit
-  test_page.py     tests for state, graph and decisions, using fakeredis
+  test_page.py     tests for models, state and decisions, using fakeredis
+  test_graph.py    tests for the ring picture
   fake/            everything that only exists for testing alone (section 6)
     __init__.py
     feed.py        pushes fake scored / rings / cases / decisions messages onto a Redis
@@ -101,7 +102,7 @@ The case writer's plan also proposes a `case:<ring_id>` hash (its Phase C, C1) s
 
 ### `scored`
 
-Totals from `XLEN scored` (and the `flagged` count from the last N messages scaled is not good enough; keep a running count from the messages actually read, see note below). Latency from the last 500 messages: `scored_at - sent_at`, p50 and p99 over that window. **Never `XRANGE scored - +`**; it will hold hundreds of thousands of rows.
+Total scored from `XLEN scored`. Flagged is counted over the last 500 messages only (see the note below). Latency from the last 500 messages: `scored_at - sent_at`, p50 and p99 over that window. **Never `XRANGE scored - +`**; it will hold hundreds of thousands of rows.
 
 Counting flagged transfers exactly needs either every message or a counter the scorer maintains. Plan: ask the scorer to `HINCRBY stats:scorer scored 1` and `flagged 1` as it goes (one line in their loop). Until that exists, the page shows flagged as "N in the last 500 scored" and labels it so.
 
@@ -140,8 +141,8 @@ Goal: when the real replayer, scorer and ring service are running, removing ever
 1. **One folder.** Everything that exists only to run the page without the rest of the stack lives in `services/page/fake/`. Nothing in `app.py`, `state.py`, `graph.py` or `decisions.py` imports from it, references its files, or has a "demo mode" flag that depends on it. The page cannot tell fake messages from real ones because they arrive on the same streams in the same format.
 2. **Fake data enters through Redis only.** `fake/feed.py` writes to the real stream names from `common.bus` with the exact field sets in the guide's Handoffs table. The page never reads a JSON file directly. This is what makes the fake feed a true stand-in: if the page works on the fake feed, the only remaining integration risk is the neighbours not matching the contract.
 3. **Reuse the case writer's fakes rather than inventing new rings.** `fake/feed.py` pushes `services/casewriter/fake_rings.json` onto `rings` (the case writer's `--push-fake` already does exactly this; the feed calls that function rather than copying it), and generates `cases` rows by running the case writer's `--file` mode and pushing the output. That keeps one source of truth for what a ring looks like. The only new data the page owns is generated in code: fake `scored` rows (for the counters) and two fake `decisions` (to test badges). No fixture files are needed.
-4. **Fake content is visibly fake.** Fake ring IDs stay in the `R-000x` range from `fake_rings.json` (or `R-9xxxx` from `patterns_to_rings.py`); fake scored rows use `txn_id` values prefixed `FAKE-` and accounts like `42_FAKE1A2B3`; fake decision notes start with `FAKE`. A fake Granite upgrade (`--fake-upgrade`) keeps the template text and says so in `check_note`. Real IDs from the cleaning pipeline are plain integers, so a stray fake row is obvious in a screenshot.
-5. **Tests use `fakeredis`, not the fake feed.** `test_page.py` builds its own small messages in memory. The fake feed is a developer tool for looking at the page, not a test dependency. Deleting `fake/` must not break `pytest`.
+4. **Fake content is visibly fake.** Fake ring IDs stay in the `R-000x` range from `fake_rings.json` (or `R-9xxxx` from `patterns_to_rings.py`); fake scored rows use `txn_id` values prefixed `FAKE-` and accounts like `42_FAKE1A2B3`; fake decision notes start with `FAKE`. `--reset` treats any ring, case or decision on those ring IDs as test data, so decisions clicked on the page during local testing do not block a reset. A fake Granite upgrade (`--fake-upgrade`) keeps the template text and says so in `check_note`. Real IDs from the cleaning pipeline are plain integers, so a stray fake row is obvious in a screenshot.
+5. **Tests use `fakeredis`, not the fake feed.** `test_page.py` and `test_graph.py` build its own small messages in memory. The fake feed is a developer tool for looking at the page, not a test dependency. Deleting `fake/` must not break `pytest`.
 6. **The name says so.** The folder is `fake/`, matching `fake_rings.json` and `--push-fake` in the case writer, so a search for `fake` finds every stand-in in the repo.
 
 ### Inventory of fake and test-only parts across the repo (as of today)
