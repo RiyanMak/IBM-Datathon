@@ -27,6 +27,7 @@ import time
 from datetime import datetime
 
 from common import bus
+from common.paths import DATA_DIR
 from common.streams import (
     TS_FORMAT_ISO,
     TXN_COLUMNS,
@@ -262,10 +263,10 @@ def default_speed():
 
 def build_parser():
     p = argparse.ArgumentParser(description="Mule Ring Hunter replayer: clean.csv -> Redis stream")
-    p.add_argument("--clean", default=os.environ.get("CLEAN_PATH", "/data/clean.csv"),
-                   help="cleaned transactions (default: $CLEAN_PATH or /data/clean.csv)")
-    p.add_argument("--splits", default=os.environ.get("SPLITS_PATH", "/data/splits.json"),
-                   help="split cut-offs (default: $SPLITS_PATH or /data/splits.json)")
+    p.add_argument("--clean", default=os.environ.get("CLEAN_PATH", str(DATA_DIR / "clean.csv")),
+                   help="cleaned transactions (default: $CLEAN_PATH or %(default)s)")
+    p.add_argument("--splits", default=os.environ.get("SPLITS_PATH", str(DATA_DIR / "splits.json")),
+                   help="split cut-offs (default: $SPLITS_PATH or %(default)s)")
     p.add_argument("--start", help="first data time to send, YYYY-MM-DDTHH:MM:SS "
                                    "(default: test_start from splits.json)")
     p.add_argument("--allow-before-test", action="store_true",

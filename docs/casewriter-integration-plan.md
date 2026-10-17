@@ -9,7 +9,7 @@ Done in the integration commit on `data-cleaning-v1`:
 - A3: `common/bus.py` holds the Redis connection and stream names; the case writer uses it (default host `redis`).
 - A4: `requests` and `pytest` added to root `requirements.txt`; Libraries section added to the root README.
 - D1: `make_rates.py` removed. The cleaning pipeline's `fx_rates.json` (training rows only) is the team's single rate table; `patterns_to_rings.py` reads it directly (flat files still accepted).
-- D2: `patterns_to_rings.py` defaults to `/data/HI-Small_Patterns.txt` and `/data/fx_rates.json`.
+- D2: `patterns_to_rings.py` defaults to `/data/data/HI-Small_Patterns.txt` and `/data/data/fx_rates.json` (`~/shared/data/` on the VM; see `common/paths.py`).
 - D3: `"other"` shape text added; unknown shapes read "an unusual laundering pattern".
 
 Problems 1 to 4, 10 and 11 in section 2 are therefore closed. The rest of this document is kept as written for the remaining phases.
@@ -198,7 +198,7 @@ The case writer never reads the raw files, so the dependency is small. We are wa
 Needed:
 
 - `~/shared/data/clean.csv` and `splits.json` exist, so the replayer can stream the test part.
-- `~/shared/data/rates.json` produced by the shared script (D1), so test rings use the same dollar amounts as the scorer.
+- `~/shared/data/fx_rates.json` from the cleaning pipeline (D1), so test rings use the same dollar amounts as the scorer.
 - The account ID rule applied in `clean.csv` exactly as `bank_without_leading_zeros + "_" + account`. The fact check's account regex (`\d+_[0-9A-Za-z]+`) depends on it.
 - Pair 1's two or three chosen demo attempts (one scatter-gather, one fan-out) with their start times, so `--start` on the replayer and the case-writer demo moments match.
 - Redis running in compose with no published port, and `common/bus.py` (A3) in place.

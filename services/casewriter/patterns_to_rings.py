@@ -6,7 +6,7 @@ It reads HI-Small_Patterns.txt (from the Kaggle dataset). Each block in that fil
 is one known laundering attempt with its shape name and its transfers.
 
 Usage (from the repo root):
-  python -m services.casewriter.patterns_to_rings /data/HI-Small_Patterns.txt real_rings.json --rates data/processed/fx_rates.json
+  python -m services.casewriter.patterns_to_rings /data/data/HI-Small_Patterns.txt real_rings.json --rates data/processed/fx_rates.json
   python -m services.casewriter.main --file real_rings.json
 
 Options:
@@ -15,8 +15,8 @@ Options:
                     fx_rates.json written by scripts/clean_data.py (learned on the
                     training split only) so test rings and the scorer agree on every
                     dollar amount. A flat {"Euro": 1.17, ...} file is accepted too.
-                    Defaults to /data/fx_rates.json if that file exists (the compose
-                    mount). Without rates, only attempts paid in US Dollars are used.
+                    Defaults to /data/data/fx_rates.json if that file exists
+                    (~/shared/data on the VM, see common/paths.py). Without rates, only attempts paid in US Dollars are used.
 
 Account IDs and dollar amounts follow the cleaning rules in common/data_contract.py
 and common/fx.py: "<bank without leading zeros>_<account>" and
@@ -31,9 +31,10 @@ import os
 from datetime import datetime
 
 from common.data_contract import make_account_id
+from common.paths import DATA_DIR
 
-DEFAULT_PATTERNS = "/data/HI-Small_Patterns.txt"
-DEFAULT_RATES = "/data/fx_rates.json"
+DEFAULT_PATTERNS = str(DATA_DIR / "HI-Small_Patterns.txt")
+DEFAULT_RATES = str(DATA_DIR / "fx_rates.json")
 
 
 def account_id(bank, account):

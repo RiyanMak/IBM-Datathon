@@ -354,7 +354,7 @@ Optional. Runs the replayer at `--speed 0` into a stream with a short `--maxlen`
 
 - The `Dockerfile` base image placeholder must be filled before anything else; it is the first line of the runbook.
 - The scorer must use `XREADGROUP` with a consumer group and `XACK` after scoring. Without a group, `--scale scorer=3` makes every replica score every message, and the kill-and-recover demo cannot work.
-- The data files go **directly** in `~/shared/` (`clean.csv`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and later `patterns.csv`), because the services default to `/data/<name>`. Or set `CLEAN_PATH` and `SPLITS_PATH` in compose.
+- The data files go in `~/shared/data/` (`clean.csv`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and later `patterns.csv`) and the models in `~/shared/models/`, as in the team guide. Compose mounts `~/shared` as `/data`, so the services default to `/data/data/<name>` and `/data/models/<name>` (`common/paths.py`). `DATA_DIR`, `MODELS_DIR`, `CLEAN_PATH` and `SPLITS_PATH` override them.
 
 ---
 
@@ -412,7 +412,7 @@ All values on Redis are text; lists and objects are JSON text.
 | `notifier:messages` (hash) | notifier | notifier | `ring_id → adapter message reference` | new |
 | `stats:casewriter` (hash) | casewriter (planned C2) | page, notifier footer | `cases_written, granite_tried, granite_passed` | planned by casewriter |
 
-Files in `~/shared` (`/data` inside containers): `clean.csv`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and after D1 to D3: `accounts_clean.csv`, `patterns.csv`, `cleaning_manifest.json`.
+Files in `~/shared/data` (`/data/data` inside containers): `clean.csv`, `splits.json`, `fx_rates.json`, `HI-Small_Patterns.txt`, and after D1 to D3: `accounts_clean.csv`, `patterns.csv`, `cleaning_manifest.json`. Models are in `~/shared/models` (`/data/models`).
 
 ---
 

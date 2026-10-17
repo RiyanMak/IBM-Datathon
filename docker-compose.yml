@@ -1,4 +1,5 @@
-# Services reach Redis at host name "redis". ~/shared on the VM is /data inside.
+# Services reach Redis at host name "redis". ~/shared on the VM is /data inside,
+# so data files are in /data/data and models in /data/models (common/paths.py).
 #
 #   docker compose up -d --build
 #   docker compose ps

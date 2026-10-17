@@ -40,8 +40,8 @@ Press Ctrl+C to stop. It finishes the current batch, prints the last `txn_id` it
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--clean PATH` | `$CLEAN_PATH` or `/data/clean.csv` | Cleaned transactions |
-| `--splits PATH` | `$SPLITS_PATH` or `/data/splits.json` | Split cut-offs |
+| `--clean PATH` | `$CLEAN_PATH` or `/data/data/clean.csv` | Cleaned transactions (`~/shared/data/clean.csv` on the VM) |
+| `--splits PATH` | `$SPLITS_PATH` or `/data/data/splits.json` | Split cut-offs |
 | `--start TS` | `test_start` from splits.json | First data time to send, `YYYY-MM-DDTHH:MM:SS` |
 | `--allow-before-test` | off | Allow a `--start` before the test period (those rows were used for training, so scores there look too good) |
 | `--speed X` | `$SPEED` or 600 | Data seconds per real second. `0` = as fast as possible |
