@@ -1,0 +1,3 @@
+# Extra packages for running the Redis tests on a laptop without a Redis server (fakeredis stands in for it).
+redis==8.1.0
+fakeredis==2.40.0

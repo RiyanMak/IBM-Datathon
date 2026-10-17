@@ -76,7 +76,7 @@ The fake rings are made up. To test on real data before the ring service exists,
 python3 -m services.casewriter.patterns_to_rings ~/Downloads/HI-Small_Patterns.txt real_rings.json --rates data/processed/fx_rates.json --limit 40
 python3 -m services.casewriter.main --file real_rings.json
 ```
-- Without `--rates`, only attempts paid entirely in US Dollars are used. Inside the containers the defaults are `/data/HI-Small_Patterns.txt` and `/data/fx_rates.json`, so both arguments can be left out there.
+- Without `--rates`, only attempts paid entirely in US Dollars are used. Inside the containers the defaults are `/data/data/HI-Small_Patterns.txt` and `/data/data/fx_rates.json` (`~/shared/data/` on the VM), so both arguments can be left out there.
 - The rates are learned from the training split only, by the same code the scorer uses, so test rings and the scorer agree on every dollar amount. Do not build a second rate table.
 - These rings have no model scores yet, so the score sentences are skipped. That's expected.
 - Read 5–10 of the summaries. Do they make sense for the shape? Do the amounts look right? Note any that read badly, and fix the wording in step 4.
