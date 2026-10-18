@@ -31,6 +31,8 @@ RUN pip freeze | grep -iE "^(pandas|numpy)==" && python -c "import pandas, numpy
 
 COPY common/ ./common/
 COPY services/ ./services/
+COPY scripts/ ./scripts/
+COPY tests/ ./tests/
 COPY .streamlit/ ./.streamlit/
 
 # The image's non-root user (uid 1000); ~/shared on the VM is mounted as /data.
