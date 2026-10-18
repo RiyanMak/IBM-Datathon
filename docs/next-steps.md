@@ -6,12 +6,12 @@ Updated October 17, 2026, after the replayer, case writer and investigator page 
 |---|---|
 | Cleaning (`scripts/clean_data.py`) | Done. Verified on the real file: 5,078,345 rows, 5,177 laundering. |
 | 1 Replayer (`services/replayer/`) | Done. Tested against a real Redis with the real clean file. |
-| 2+3 Scorer (`services/scorer/`) | **Not started.** |
+| 2+3 Scorer (`services/scorer/`) | Done. Tested with the replayer on a real Redis: keeps up with speed 600 on a laptop, p99 latency 38 ms. |
 | 4 Rings + GNN (`services/rings/`) | **Not started.** |
 | 5 Case writer (`services/casewriter/`) | Done. |
 | 6 Investigator page (`services/page/`) | Done. |
-| Training (`notebooks/train_xgboost.ipynb`) | Ready. Not yet run on the VM. |
-| Platform (`Dockerfile`, `docker-compose.yml`) | Dockerfile still has a placeholder image and the wrong user. |
+| Training (`notebooks/train_xgboost.ipynb`) | Run on the VM: test F1 0.63, PR-AUC 0.64. Retrain once after the clue-class fix (integer-cent sums) is merged. |
+| Platform (`Dockerfile`, `docker-compose.yml`) | Dockerfile fixed (real image, `ibm-user`, tolerant optional installs). Compose not yet run on the VM. |
 
 Nothing flows end to end until the scorer and the ring service exist.
 
@@ -47,6 +47,8 @@ Must do:
 - Report p50 and p99 of `scored_at - sent_at`. Target: p99 under 50 ms. The clue class alone measured 0.05 ms at p99.
 
 Scaling demo: `docker compose up -d --scale scorer=3`. The consumer group splits the work.
+
+Measured on a laptop: warm-up of the 4.06 million pre-test rows takes 80 s and about 2 GB of memory per scorer (514,000 account memories), so on the 8 GB VM start scorers one at a time and expect a few minutes each. With three scorers each one holds only a third of the history, so use one for accuracy numbers and three for the throughput screenshot.
 
 Telum (after the scorer works, time-box 2 hours): if `grep nnpa /proc/cpuinfo` finds the accelerator, load `scorer.json` into Snap ML with `import_model(..., input_type="xgb_json")`, score the same 10,000 test transfers both ways, compare time and results. If Snap ML will not install, say so in the video and show CPU latency instead.
 
