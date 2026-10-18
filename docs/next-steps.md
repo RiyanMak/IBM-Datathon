@@ -7,7 +7,8 @@ Updated October 17, 2026, after the replayer, case writer and investigator page 
 | Cleaning (`scripts/clean_data.py`) | Done. Verified on the real file: 5,078,345 rows, 5,177 laundering. |
 | 1 Replayer (`services/replayer/`) | Done. Tested against a real Redis with the real clean file. |
 | 2+3 Scorer (`services/scorer/`) | Done. Tested with the replayer on a real Redis: keeps up with speed 600 on a laptop, p99 latency 38 ms. |
-| 4 Rings + GNN (`services/rings/`) | Grouping done (window, union-find, hubs, Louvain, shapes, stable ids). Tested behind the scorer on a real Redis; the case writer and page read its output. GNN not started. |
+| 4 Rings + GNN (`services/rings/`) | Grouping done (window, union-find, hubs, Louvain, shapes, stable ids, one-hop expansion, rings keep their transfers). Tested behind the scorer on a real Redis; the case writer and page read its output. GNN not started. |
+| Ring-level evaluation (`scripts/evaluate_rings.py`) | Done and tested. Needs `HI-Small_Patterns.txt` (Kaggle) to run on the real replay; see section 4. |
 | 5 Case writer (`services/casewriter/`) | Done. |
 | 6 Investigator page (`services/page/`) | Done. |
 | Training (`notebooks/train_xgboost.ipynb`) | Run on the VM: test F1 0.63, PR-AUC 0.64. Retrain once after the clue-class fix (integer-cent sums) is merged. |
@@ -28,9 +29,11 @@ Also worth doing: split `requirements.txt` so that `snapml` and `ibm-watsonx-ai`
 
 ### 2. Train the model on the VM
 
-Copy `data/processed/clean.csv` and `splits.json` to `~/shared/data/` on the VM, pull the repo inside `~/shared`, shut down the demo kernels, open `notebooks/train_xgboost.ipynb` and Run All. It writes `scorer.json`, `feature_list.json` and `thresholds.json` to `~/shared/models/` and `features.csv` to `~/shared/data/`.
+Done once (test F1 0.63, PR-AUC 0.64). It must be done once more with the fixed clue class (integer-cent window sums, branch `scorer-rings`): either rerun the notebook on the VM (Kernel → Restart, Run All, about seven minutes), or copy the laptop-trained model files from `data/models/` (same data, same fixed class, test F1 0.635) into `~/shared/models/` on the VM. XGBoost JSON is portable across machines.
 
 Then read the outputs together: feature importance (leakage check), precision versus recall balance (class weight), validation versus test gap.
+
+Measured on the real test rows: at the alert threshold recall 0.46 and precision 0.91; at the ring threshold recall 0.60 and precision 0.56; at a score of 0.5 recall 0.86 and precision 0.09. The ring service's expansion uses the 0.5 level for members of a suspected group only.
 
 ### 3. Scorer (steps 2 and 3)
 
@@ -72,6 +75,19 @@ Part B, the GNN (plain PyTorch, two message-passing layers with `index_add_`, tr
 ### 5. Wire the whole stack on the VM
 
 `docker compose up -d --build`, then `docker compose ps` (screenshot), replay, watch a ring appear on the page, click Freeze, `XRANGE decisions - +` (screenshot). Scale the scorer to 3 and screenshot the throughput difference.
+
+### 5b. Ring-level evaluation (the best pitch numbers)
+
+Download `HI-Small_Patterns.txt` from the Kaggle page to `~/shared/data/` on the VM (and to the laptop for local runs). After a full replay with one scorer and the ring service:
+
+```bash
+python -m scripts.evaluate_rings --patterns ~/shared/data/HI-Small_Patterns.txt \
+    --rates ~/shared/data/fx_rates.json --splits ~/shared/data/splits.json --redis --out eval.json
+```
+
+It prints: known attempts starting in the replayed period, how many a ring caught (half the ring's accounts belong to the attempt), how often the shape name matched, median minutes from an attempt's first transfer to its ring, and the share of the attempt's money still stoppable at that moment. Tested on fake data with planted rings: 6 of 6 caught, 22 minutes to alert, about half the money still stoppable, every shape named correctly in the ring's latest version.
+
+Batch runs (not the live demo): run the replayer with `--maxlen 0` and the scorer with `--maxlen 0`, otherwise the stream caps trim messages that no consumer has read yet.
 
 ### 6. Numbers for the pitch (Pair 1 collects)
 

@@ -14,12 +14,13 @@ The clock is data time, taken from the transfers themselves, so the service beha
 
 ## Rules, as in the team guide
 
-- Keep a transfer when `score >= ring` from `thresholds.json` (0.946 for the current model). Self-transfers are ignored.
-- Drop kept transfers older than 24 data hours.
-- Every 10 data minutes, union-find over the kept transfers. Accounts with more than 300 counterparties in the window are hubs and are left out, so a bank cannot glue unrelated rings together.
+- Keep a transfer in the window when `score >= expand` (0.5 by default); it is a *candidate* for grouping when `score >= ring` from `thresholds.json` (0.952 for the current model). Self-transfers are ignored.
+- Drop window transfers older than 24 data hours.
+- Every 10 data minutes, union-find over the candidates. Accounts with more than 300 counterparties among the candidates are hubs and are left out, so a bank cannot glue unrelated rings together.
 - Keep groups of 3 to 50 accounts. Larger ones are split with Louvain (networkx) and the pieces that fit are kept.
-- A group that shares at least half of its accounts with an existing ring keeps that `ring_id` and gets a new version; otherwise it is a new ring. Ids come from `INCR rings:next_id`, so they stay unique across restarts.
-- A ring is published only when it is new or its accounts or transfers changed. When the stream goes quiet, whatever arrived since the last regroup is grouped once more so nothing waits forever.
+- Expansion, one hop: once a group exists, its members' other window transfers (score between `expand` and `ring`) join the ring, highest score first, within the size cap. Measured on the real test period: at the ring threshold the model finds 60 % of laundering transfers, at 0.5 it finds 86 %, so this is what turns a two-arrow fragment into the whole fan-out or scatter-gather. Expanded accounts do not expand further, and hubs never join.
+- A group that shares at least half of its accounts with an existing ring keeps that `ring_id`; otherwise it is a new ring. Ids come from `INCR rings:next_id`, so they stay unique across restarts.
+- A ring keeps every transfer it has ever been given. The window is for discovering groups, not for forgetting them, so the page and the case writer always see the whole case. A new version is published only when a transfer or account is added. When the stream goes quiet, whatever arrived since the last regroup is grouped once more so nothing waits forever.
 
 Shape, most specific rule first: stack (sources → middles → sinks, two or more accounts in each layer), bipartite (two groups, arrows only from one to the other), scatter-gather (A pays several middle accounts, two or more of which pay the same B), gather-scatter (several pay one hub, which pays several), cycle (three or more accounts on a directed loop), fan-out (one account pays three or more), fan-in (three or more pay one), other. Stack and bipartite are checked before scatter-gather because a layered ring always contains small scatter-gather patterns.
 
@@ -56,6 +57,7 @@ REDIS_HOST=localhost .venv/bin/python -m services.rings.main --models path/to/mo
 |---|---|---|
 | `--models DIR` | `$MODELS_PATH` or `/data/models` | Folder with `thresholds.json` |
 | `--ring-threshold X` | from thresholds.json | Override the threshold |
+| `--expand-threshold X` | 0.5 | Members' transfers at or above this join their ring; set it to the ring threshold to disable |
 | `--window-hours H` | 24 | Keep transfers this many data hours |
 | `--regroup-minutes M` | 10 | Regroup every M data minutes |
 | `--hub-limit N` | 300 | Leave out accounts with more counterparties than N |
