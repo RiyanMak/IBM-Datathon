@@ -99,11 +99,14 @@ body.is-entry .stApp{background-image:
   radial-gradient(60% 55% at 78% 42%,color-mix(in srgb,var(--accent) 14%,transparent),transparent 70%),
   linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
   background-size:100% 100%,64px 64px,64px 64px;background-attachment:fixed}
-body.is-entry .stApp::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
-  background:radial-gradient(1px 1px at 20% 30%,var(--accent) 60%,transparent 61%),radial-gradient(1px 1px at 68% 18%,var(--accent) 60%,transparent 61%),radial-gradient(1.5px 1.5px at 84% 72%,var(--accent) 60%,transparent 61%),radial-gradient(1px 1px at 38% 78%,var(--accent) 60%,transparent 61%),radial-gradient(1px 1px at 55% 55%,var(--accent) 60%,transparent 61%);
-  opacity:.35;animation:drift 18s ease-in-out infinite alternate}
-@keyframes drift{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,-14px,0)}}
+/* Canvas replaces the CSS grid only after it initializes successfully. */
+body.is-entry .stApp.has-entry-field{background-image:
+  radial-gradient(60% 55% at 78% 42%,color-mix(in srgb,var(--accent) 14%,transparent),transparent 70%);
+  background-size:100% 100%}
+.entry-field{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.entry-field[hidden]{display:none}
 body.is-entry .entry-foot strong{transition:none}
+body.is-entry .block-container{position:relative;z-index:1}
 .hero-flow{width:100%;height:auto;display:block}
 .hero-flow .wire{stroke:var(--border-strong);stroke-width:1.4;fill:none}
 .hero-flow .acct{fill:var(--surface);stroke:var(--border-strong);stroke-width:1.6}
