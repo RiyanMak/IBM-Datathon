@@ -18,8 +18,9 @@ SCORED = "scored"      # scorer -> rings
 RINGS = "rings"        # rings -> casewriter, page
 CASES = "cases"        # casewriter -> page
 DECISIONS = "decisions"  # page -> (audit)
+GRANITE_REQUESTS = "granite_requests"  # page -> casewriter: "write the Granite summary for this ring now"
 
-STREAMS = (TXNS, SCORED, RINGS, CASES, DECISIONS)
+STREAMS = (TXNS, SCORED, RINGS, CASES, DECISIONS, GRANITE_REQUESTS)
 
 
 def redis_host() -> str:

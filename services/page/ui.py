@@ -12,7 +12,7 @@ from redis.backoff import NoBackoff
 from redis.retry import Retry
 
 from common import bus
-from services.page import fmt, state, workspace as ws
+from services.page import fmt, granite_requests, state, workspace as ws
 
 HERE = Path(__file__).resolve().parent
 REFRESH_S = 2
@@ -180,6 +180,33 @@ def resolve_ring(snap):
     if ss.get("reviewed_ring") is None or ss["reviewed_ring"].ring_id != incoming.ring_id:
         ss["reviewed_ring"] = incoming
     return ss["reviewed_ring"], incoming, outside
+
+
+def case_for(snap, ring):
+    """The newest case for a ring: from the stream window when it is there, else from
+    the case writer's `case:<ring_id>` hash (a busy replay pushes older rings out of
+    the window within a minute, but the hash always holds their latest case)."""
+    case = snap.cases.get(ring.ring_id)
+    if case is not None or not snap.redis_ok:
+        return case
+    try:
+        return state.latest_case(redis_client(), ring.ring_id)
+    except Exception:
+        return None
+
+
+def ask_granite(snap, ring, case):
+    """Ask the case writer for Granite's summary of the ring on screen when its newest
+    case is not Granite's text yet. Returns when this version was requested (wall
+    time) or None. One request per ring version per 45 s; a request for a ring that
+    already has Granite is ignored by the case writer."""
+    throttle = granite_requests.Throttle(st.session_state.setdefault("granite_requests", {}))
+    if snap.redis_ok and granite_requests.wanted(case):
+        try:
+            throttle.request(redis_client(), ring.ring_id, ring.version)
+        except Exception:
+            pass   # Redis down between the snapshot and now: the banner says so
+    return throttle.asked_at(ring.ring_id, ring.version)
 
 
 def step_rail(current):

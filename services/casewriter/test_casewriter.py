@@ -192,7 +192,7 @@ def test_service_publishes_template_first_then_the_granite_upgrade():
     r = fakeredis.FakeRedis(decode_responses=True)
     push_fake(str(FAKE_RINGS), r)
     # a "Granite" that answers with the template's own words: it passes the fact check
-    stats = run_redis(use_granite=True, r=r, max_loops=1,
+    stats = run_redis(use_granite=True, mode="all", r=r, max_loops=1,
                       granite_fn=lambda facts: json.dumps(template_summary(facts)))
     cases = [fields for _id, fields in r.xrange("cases")]
     assert len(cases) == 6
@@ -217,7 +217,7 @@ def test_service_keeps_the_template_when_granite_lies_or_fails():
         parts = template_summary(facts)
         parts["summary"] = "Account 99_FAKE moved $123,456,789 between the accounts."
         return json.dumps(parts)
-    stats = run_redis(use_granite=True, r=r, max_loops=1, granite_fn=lying)
+    stats = run_redis(use_granite=True, mode="all", r=r, max_loops=1, granite_fn=lying)
     assert [fields["source"] for _id, fields in r.xrange("cases")] == ["template"] * 3
     assert stats.granite_tried == 3 and stats.granite_passed == 0
 
@@ -225,7 +225,7 @@ def test_service_keeps_the_template_when_granite_lies_or_fails():
     push_fake(str(FAKE_RINGS), r2)
     def crashing(facts):
         raise RuntimeError("model not loaded")
-    stats = run_redis(use_granite=True, r=r2, max_loops=1, granite_fn=crashing)
+    stats = run_redis(use_granite=True, mode="all", r=r2, max_loops=1, granite_fn=crashing)
     assert [fields["source"] for _id, fields in r2.xrange("cases")] == ["template"] * 3
     assert stats.granite_passed == 0
 
@@ -290,16 +290,16 @@ def test_unchanged_facts_reuse_the_granite_summary():
     p = Publisher(r, stats)
     echo = lambda facts: json.dumps(template_summary(facts))   # passes the fact check
     v1 = version_of(0, 1)
-    assert p.template_first("1-0", v1, use_granite=True) is True
+    assert p.template_first("1-0", v1, use_granite=True) == 1
     p.granite_result(v1, *try_granite(v1, stats, echo, "1-0"))
     # version 2 with the same transfers: no Granite call, the Granite text comes back at once
-    assert p.template_first("2-0", version_of(0, 2), use_granite=True) is False
+    assert p.template_first("2-0", version_of(0, 2), use_granite=True) is None
     last = r.xrevrange("cases", count=1)[0][1]
     assert (last["version"], last["source"], last["check_note"]) == ("2", "granite", "reused v1 summary")
     assert r.hgetall(CASE_KEY % "R-0001") == last
     # one more transfer is a new story: template first, Granite again
     extra = ["T-EXTRA", "10_8000EBD30", "27_80A1C4F20", 500.0, "2022-09-08T19:00:00", 0.5]
-    assert p.template_first("3-0", version_of(0, 3, [extra]), use_granite=True) is True
+    assert p.template_first("3-0", version_of(0, 3, [extra]), use_granite=True) == 1
     assert r.hget(CASE_KEY % "R-0001", "check_note") == "granite pending"
     assert stats.granite_tried == 1 and stats.cases == 3
 
@@ -343,11 +343,68 @@ def test_pending_rings_are_finished_after_a_restart():
     assert r.xpending(IN_STREAM, GROUP)["pending"] == 0
 
 
+def test_on_demand_mode_writes_templates_and_serves_requests_first():
+    """Default mode: every ring gets the template; Granite only writes for a requested
+    ring, found on the rings stream even when the service has restarted."""
+    from services.casewriter.casewriter import push_fake, run_redis, CASE_KEY, NOTE_ON_REQUEST
+    from services.page import granite_requests
+    r = fake_redis()
+    push_fake(str(FAKE_RINGS), r)
+    echo = lambda facts: json.dumps(template_summary(facts))
+    stats = run_redis(use_granite=True, mode="on_demand", r=r, max_loops=1, block_ms=10, granite_fn=echo)
+    assert stats.granite_tried == 0
+    assert all(c["source"] == "template" and c["check_note"] == NOTE_ON_REQUEST for _id, c in r.xrange("cases"))
+
+    granite_requests.write(r, "R-0002", 1)
+    stats = run_redis(use_granite=True, mode="on_demand", r=r, max_loops=1, block_ms=10, granite_fn=echo,
+                      requests_from="0")
+    assert stats.granite_tried == 1 and stats.granite_passed == 1
+    assert r.hmget(CASE_KEY % "R-0002", "source", "check_note") == ["granite", "passed fact check"]
+    assert r.hmget(CASE_KEY % "R-0001", "source") == ["template"]
+
+
+def test_requests_are_ignored_once_granite_wrote_and_watched_rings_go_first():
+    from services.casewriter.casewriter import (Publisher, Stats, try_granite, NOTE_PENDING,
+                                                PRIORITY_REQUEST, MODE_ON_DEMAND)
+    r = fake_redis()
+    pub = Publisher(r, Stats())
+    fields = ring_fields(0)
+    assert pub.template_first("1-0", fields, True, MODE_ON_DEMAND) is None
+    found = pub.request({"ring_id": "R-0001"})
+    assert found is not None and found[1] == "1-0"
+    assert r.hget("case:R-0001", "check_note") == NOTE_PENDING
+    case, _note = try_granite(fields, granite_fn=lambda f: json.dumps(template_summary(f)), msg_id="1-0")
+    pub.granite_result(fields, case, None)
+    assert pub.request({"ring_id": "R-0001"}) is None          # already Granite's text
+    changed = dict(fields, version="2", edges=json.dumps([dict(e, amount_usd=e["amount_usd"] + 5)
+                                                           for e in RINGS[0]["edges"]]))
+    assert pub.template_first("2-0", changed, True, MODE_ON_DEMAND) == PRIORITY_REQUEST
+    assert pub.request({"ring_id": "R-9999"}) is None            # unknown ring
+
+
+def test_worker_never_queues_the_same_ring_version_twice():
+    import threading
+    from services.casewriter.casewriter import GraniteWorker, Stats
+    r = fake_redis()
+    gate = threading.Event()
+
+    def slow(facts):
+        gate.wait(5)
+        return json.dumps(template_summary(facts))
+    worker = GraniteWorker(r, Stats(), slow, workers=1)
+    assert worker.submit(ring_fields(0), "1-0")
+    assert not worker.submit(ring_fields(0), "1-0")
+    gate.set()
+    worker.drain()
+    assert worker.submit(ring_fields(0), "1-0")
+    worker.drain()
+
+
 def test_case_hash_and_stats_hash():
     from services.casewriter.casewriter import push_fake, run_redis, CASE_KEY, STATS_KEY
     r = fake_redis()
     push_fake(str(FAKE_RINGS), r)
-    run_redis(use_granite=True, r=r, max_loops=1, block_ms=10,
+    run_redis(use_granite=True, mode="all", r=r, max_loops=1, block_ms=10,
               granite_fn=lambda facts: json.dumps(template_summary(facts)))
     for ring_id in ("R-0001", "R-0002", "R-0003"):
         newest = [c for _id, c in r.xrange("cases") if c["ring_id"] == ring_id][-1]
@@ -359,7 +416,7 @@ def test_case_hash_and_stats_hash():
     # a rejected reply leaves the template in place and the hash says why
     r = fake_redis()
     push_fake(str(FAKE_RINGS), r)
-    run_redis(use_granite=True, r=r, max_loops=1, block_ms=10,
+    run_redis(use_granite=True, mode="all", r=r, max_loops=1, block_ms=10,
               granite_fn=lambda facts: json.dumps(dict(template_summary(facts), summary="It moved $999,999.")))
     held = r.hgetall(CASE_KEY % "R-0001")
     assert held["source"] == "template" and held["check_note"].startswith("granite reply rejected")
@@ -426,6 +483,56 @@ def test_granite_token_is_reused_and_calls_time_out_at_15s():
         assert len(iam) == 1 and len(chat) == 2
         assert all(timeout == 15 for _url, timeout in calls)
     with_fake_watsonx(200, run)
+
+
+def test_granite_bills_a_space_instead_of_the_project_when_one_is_set():
+    """WATSONX_SPACE_ID (a deployment space made through the REST API) replaces project_id in
+    the call; without it the project is sent, and neither set means not configured."""
+    import os
+    import sys
+    import types
+    from services.casewriter import granite
+
+    bodies = []
+
+    def post(url, timeout=None, json=None, **kw):
+        bodies.append(json)
+        if "iam.cloud.ibm.com" in url:
+            return FakeResponse(200, {"access_token": "tok", "expires_in": 3600})
+        return FakeResponse(200, {"choices": [{"message": {"content": "{}"}}]})
+
+    names = ("WATSONX_APIKEY", "WATSONX_PROJECT_ID", "WATSONX_SPACE_ID", "WATSONX_URL")
+    saved_env = {k: os.environ.get(k) for k in names}
+    saved_requests = sys.modules.get("requests")
+    sys.modules["requests"] = types.SimpleNamespace(post=post)
+    granite.reset_state()
+    try:
+        os.environ.update({"WATSONX_APIKEY": "k", "WATSONX_PROJECT_ID": "p", "WATSONX_URL": "https://x"})
+        os.environ.pop("WATSONX_SPACE_ID", None)
+        granite.call_granite({"ring_id": "R-1"})
+        chat = [b for b in bodies if b is not None][-1]
+        assert chat["project_id"] == "p" and "space_id" not in chat
+
+        os.environ["WATSONX_SPACE_ID"] = "s"
+        granite.call_granite({"ring_id": "R-1"})
+        chat = [b for b in bodies if b is not None][-1]
+        assert chat["space_id"] == "s" and "project_id" not in chat
+
+        os.environ.pop("WATSONX_PROJECT_ID")
+        assert granite.watsonx_configured()
+        os.environ.pop("WATSONX_SPACE_ID")
+        assert not granite.watsonx_configured()
+    finally:
+        granite.reset_state()
+        if saved_requests is None:
+            sys.modules.pop("requests", None)
+        else:
+            sys.modules["requests"] = saved_requests
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def test_granite_404_switches_it_off_for_every_later_case():

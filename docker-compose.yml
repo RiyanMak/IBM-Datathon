@@ -82,6 +82,10 @@ services:
       - GRANITE_LOCAL=${GRANITE_LOCAL:-0}
       - GRANITE_GGUF=${GRANITE_GGUF:-}
       - GRANITE_THREADS=${GRANITE_THREADS:-1}
+      # on_demand: Granite writes for the rings someone opens on the page (seconds, not a
+      # queue); all: also every other ring in the background. Calls run on GRANITE_WORKERS threads.
+      - GRANITE_MODE=${GRANITE_MODE:-on_demand}
+      - GRANITE_WORKERS=${GRANITE_WORKERS:-3}
     volumes:
       - ~/shared:/data
     depends_on:

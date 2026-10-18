@@ -4,7 +4,9 @@ from html import escape
 
 import streamlit as st
 
-from services.page import fmt, state, ui, workspace as ws
+from services.page import fmt, granite_requests, state, ui, workspace as ws
+
+WAIT_NOTE_S = 90   # how long after a request the page keeps saying Granite is writing
 
 
 def reasons_and_scores(ring, case):
@@ -27,11 +29,40 @@ def reasons_and_scores(ring, case):
             st.info("Computed observations for this version are not available yet.")
 
 
-def explanation(ring, case):
+def granite_status(case, asked_at):
+    """What to say while a template case is on screen: Granite writing, or why not."""
+    waiting = asked_at is not None and time.time() - asked_at < WAIT_NOTE_S
+    if granite_requests.granite_expected(case) or (waiting and case.check_note.strip().lower() == "granite pending"):
+        if asked_at is not None:
+            return "Granite is writing an explanation · requested %d s ago. The computer's observations are shown meanwhile." % max(0, int(time.time() - asked_at))
+        return "Granite is writing an explanation. The computer's observations are shown meanwhile."
+    return None
+
+
+def observations(case):
+    """The facts the case writer computed, as a table: what Granite is given, and all a
+    reader has while Granite writes."""
+    rows = fmt.fact_rows(case.facts) if case.facts else []
+    if not rows:
+        st.info("Computed observations for this version are not available yet.")
+        return
+    st.markdown("| Observation | Value |\n|---|---|\n" + "\n".join(
+        "| %s | %s |" % (fmt.md(label), fmt.md(value)) for label, value in rows))
+    st.caption("Computed by our code from this case. Account roles are inferred; USD amounts are estimates. "
+               "The fact check rejects any Granite text that uses a number not in this set.")
+
+
+def explanation(ring, case, asked_at=None):
     st.markdown("**Case explanation**")
     if not case:
-        st.info("Summary coming. Review the transfers while the case writer prepares an explanation.")
+        if asked_at is not None:
+            st.info("Summary coming. Granite was asked %d s ago; review the transfers while the case writer prepares an explanation." % max(0, int(time.time() - asked_at)))
+        else:
+            st.info("Summary coming. Review the transfers while the case writer prepares an explanation.")
         return
+    status = granite_status(case, asked_at) if not case.is_granite else None
+    if status:
+        st.info(status)
     st.caption(fmt.md(ws.provenance(case)))
     seen_key = "summary-seen-" + ring.ring_id
     before = st.session_state.get(seen_key)
@@ -48,6 +79,10 @@ def explanation(ring, case):
         st.caption("The check validates numbers, account references, and dates against supplied facts. It does not verify wrongdoing or every inference.")
     elif case.is_granite and not case.check_note.upper().startswith("FAKE"):
         st.caption("A passing fact check was not supplied for this explanation.")
+    if not case.is_granite and case.version == ring.version:
+        st.markdown("**Computer observations**")
+        observations(case)
+        st.markdown("**Template explanation** · written from the observations above")
     for part in case.parts:
         label = "Account hypothesis" if part.key == "possible_victim" else part.label
         st.markdown("**%s**  \n%s" % (fmt.md(label), fmt.md(part.text)))
@@ -82,11 +117,12 @@ def evidence():
         st.info("New case data is available. Apply it from the Investigate step; this evidence describes version %d." % ring.version)
     ui.case_bar(ring, snap)
     left, right = st.columns([1, 1.35], gap="large")
-    case = snap.cases.get(ring.ring_id)
+    case = ui.case_for(snap, ring)
+    asked_at = ui.ask_granite(snap, ring, case)
     with left:
         reasons_and_scores(ring, case)
     with right:
-        explanation(ring, case)
+        explanation(ring, case, asked_at)
         explanation_history(ring)
 
 
