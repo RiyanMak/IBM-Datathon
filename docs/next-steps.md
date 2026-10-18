@@ -89,6 +89,19 @@ It prints: known attempts starting in the replayed period, how many a ring caugh
 
 Batch runs (not the live demo): run the replayer with `--maxlen 0` and the scorer with `--maxlen 0`, otherwise the stream caps trim messages that no consumer has read yet.
 
+Without the patterns file, `--labels clean.csv --models <models>` scores the rings against the labels. Measured on a laptop over the whole real test period with the real model (October 17):
+
+| Against the labels | Value |
+|---|---|
+| Rings | 214, median 5 accounts, largest 30 |
+| Transfers in rings labelled laundering | 1,073 of 1,446 (74 %) |
+| Rings that are mostly laundering | 162 of 214 (76 %); 46 with none |
+| Test-period laundering transfers inside some ring | 992 of 1,798 (55 %) |
+| Precision of core transfers (score >= 0.952) / expanded (0.5 to 0.952) | 84 % / 46 % |
+| Mean precision by shape | gather-scatter 96 %, fan-out 93 %, scatter-gather 90 %, other 73 %, cycle 56 %, fan-in 48 % |
+
+The six largest rings (20 to 30 accounts, scatter-gather and gather-scatter) are 90 to 100 % laundering. Fan-in is the weak shape: half of those rings are busy receivers rather than collectors, worth a stricter rule if there is time.
+
 ### 6. Numbers for the pitch (Pair 1 collects)
 
 Test precision, recall, F1 and PR-AUC for XGBoost and the $10,000 baseline; GNN precision and recall on the same transfers; share of known laundering attempts caught by a ring and how often the shape name matches `HI-Small_Patterns.txt`; minutes from an attempt's first transfer to its ring appearing; share of money still stoppable after the alert; latency p50 and p99; Telum timing if available; Granite fact-check pass rate.

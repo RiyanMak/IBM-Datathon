@@ -8,7 +8,12 @@ replayed period count (default: from the test start in splits.json).
 Usage (from the repo root):
   python -m scripts.evaluate_rings --patterns ~/Downloads/HI-Small_Patterns.txt \
       --rates data/processed/fx_rates.json --splits data/processed/splits.json --redis
+  python -m scripts.evaluate_rings --labels data/processed/clean.csv --models data/models --redis
   python -m scripts.evaluate_rings --patterns ... --rings-file rings.jsonl --out eval.json
+
+--labels needs no patterns file: it scores the rings against the Is Laundering labels
+(share of ring transfers that are laundering, share of all test-period laundering that
+sits in a ring, precision of core versus expanded transfers).
 
 Definitions (from the team guide):
   caught          a ring catches an attempt when at least half of the ring's accounts belong
@@ -30,6 +35,7 @@ import statistics
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime
+from pathlib import Path
 
 from common.data_contract import make_account_id
 from services.casewriter.patterns_to_rings import load_rates, read_attempts
@@ -193,6 +199,86 @@ def evaluate(attempts, ring_versions, since=None, until=None) -> dict:
     }
 
 
+def label_summary(ring_messages, clean_csv, ring_threshold=None) -> dict:
+    """Ring quality against the transfer labels in clean.csv (available without the patterns file).
+
+    Uses the latest version of every ring. Reports the share of ring transfers labelled
+    laundering, the share of rings that are mostly laundering, the share of all laundering
+    transfers in the period that sit in some ring, and, when ring_threshold is given, the
+    precision of core transfers (score >= ring_threshold) versus expanded ones.
+    """
+    import pandas as pd
+
+    latest = {}
+    for f in ring_messages:
+        if int(f.get("version") or 1) >= int(latest.get(f["ring_id"], {}).get("version") or 0):
+            latest[f["ring_id"]] = f
+    labels = pd.read_csv(clean_csv, usecols=["txn_id", "label", "split", "ts"], dtype={"txn_id": str, "label": "int8"})
+    period = labels[labels.split == "test"] if "test" in set(labels.split) else labels
+    label_of = dict(zip(period.txn_id, period.label))
+    n_laundering = int(period.label.sum())
+
+    kinds = {"core": [0, 0], "expanded": [0, 0]}
+    rings, in_ring = [], set()
+    for f in latest.values():
+        edges = json.loads(f.get("edges") or "[]")
+        hits = 0
+        for e in edges:
+            y = int(label_of.get(str(e["txn_id"]), 0))
+            hits += y
+            if y:
+                in_ring.add(str(e["txn_id"]))
+            if ring_threshold is not None:
+                kind = "core" if float(e.get("score") or 0) >= ring_threshold else "expanded"
+                kinds[kind][0] += y
+                kinds[kind][1] += 1
+        rings.append({"ring_id": f["ring_id"], "shape": f.get("shape", ""), "transfers": len(edges),
+                      "laundering": hits, "precision": hits / len(edges) if edges else 0.0})
+    n_transfers = sum(r["transfers"] for r in rings)
+    n_hits = sum(r["laundering"] for r in rings)
+    by_shape = {}
+    for r in rings:
+        s = by_shape.setdefault(r["shape"], {"rings": 0, "precision_sum": 0.0})
+        s["rings"] += 1
+        s["precision_sum"] += r["precision"]
+    return {
+        "rings": len(rings),
+        "transfers_in_rings": n_transfers,
+        "laundering_in_rings": n_hits,
+        "ring_transfer_precision": n_hits / n_transfers if n_transfers else None,
+        "rings_mostly_laundering": sum(1 for r in rings if r["precision"] >= 0.5),
+        "rings_without_laundering": sum(1 for r in rings if r["laundering"] == 0),
+        "laundering_in_period": n_laundering,
+        "laundering_covered": len(in_ring),
+        "laundering_covered_share": len(in_ring) / n_laundering if n_laundering else None,
+        "core_precision": kinds["core"][0] / kinds["core"][1] if kinds["core"][1] else None,
+        "expanded_precision": kinds["expanded"][0] / kinds["expanded"][1] if kinds["expanded"][1] else None,
+        "expanded_transfers": kinds["expanded"][1],
+        "per_shape": {k: {"rings": v["rings"], "mean_precision": v["precision_sum"] / v["rings"]}
+                      for k, v in sorted(by_shape.items())},
+    }
+
+
+def label_report(s) -> str:
+    lines = [
+        "| Against the transfer labels | Value |", "|---|---|",
+        "| Rings (latest versions) | %d |" % s["rings"],
+        "| Transfers in rings, labelled laundering | %d of %d (%s) |" % (
+            s["laundering_in_rings"], s["transfers_in_rings"], pct(s["ring_transfer_precision"])),
+        "| Rings that are mostly laundering | %d (%d with none) |" % (
+            s["rings_mostly_laundering"], s["rings_without_laundering"]),
+        "| Laundering transfers in the period that sit in a ring | %d of %d (%s) |" % (
+            s["laundering_covered"], s["laundering_in_period"], pct(s["laundering_covered_share"])),
+    ]
+    if s["core_precision"] is not None:
+        lines.append("| Precision of core transfers / expanded transfers | %s / %s (%d expanded) |" % (
+            pct(s["core_precision"]), pct(s["expanded_precision"]), s["expanded_transfers"]))
+    lines += ["", "| Shape | Rings | Mean precision |", "|---|---|---|"]
+    for shape, v in s["per_shape"].items():
+        lines.append("| %s | %d | %s |" % (shape, v["rings"], pct(v["mean_precision"])))
+    return "\n".join(lines)
+
+
 def pct(x):
     return "-" if x is None else "%.0f%%" % (100 * x)
 
@@ -227,8 +313,10 @@ def report(summary) -> str:
 # ---------------------------------------------------------------- command line
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Ring-level evaluation against HI-Small_Patterns.txt")
-    p.add_argument("--patterns", required=True, help="HI-Small_Patterns.txt")
+    p = argparse.ArgumentParser(description="Ring-level evaluation against HI-Small_Patterns.txt and/or the labels")
+    p.add_argument("--patterns", help="HI-Small_Patterns.txt (attempt-level numbers)")
+    p.add_argument("--labels", help="clean.csv: ring precision and laundering coverage from the labels")
+    p.add_argument("--models", help="models folder; its thresholds.json splits core from expanded transfers")
     p.add_argument("--rates", help="fx_rates.json from scripts/clean_data.py (for the money numbers)")
     p.add_argument("--splits", help="splits.json; attempts before its test_start are ignored")
     p.add_argument("--since", help="count attempts starting at or after this data time, YYYY-MM-DDTHH:MM:SS")
@@ -239,9 +327,9 @@ def main(argv=None):
     p.add_argument("--stream", default="rings")
     p.add_argument("--out", help="write the summary as JSON here")
     args = p.parse_args(argv)
+    if not args.patterns and not args.labels:
+        p.error("give --patterns and/or --labels")
 
-    rates = load_rates(args.rates) if args.rates else {}
-    attempts = load_attempts(args.patterns, rates)
     since = until = None
     if args.splits:
         with open(args.splits) as fh:
@@ -253,14 +341,29 @@ def main(argv=None):
 
     if args.redis:
         from common import bus
-        rings = rings_from_redis(bus.connect(), args.stream)
+        raw = [f for _, f in bus.connect().xrange(args.stream, "-", "+")]
     else:
-        rings = rings_from_file(args.rings_file)
+        raw = []
+        with open(args.rings_file) as fh:
+            raw = [json.loads(line) for line in fh if line.strip()]
+    rings = [parse_ring_message(f) for f in raw]
 
-    summary = evaluate(attempts, rings, since, until)
-    print("attempts in file: %d | ring versions read: %d | period from %s" % (
-        len(attempts), len(rings), since.strftime(ISO) if since else "the beginning"), file=sys.stderr)
-    print(report(summary))
+    summary = {}
+    if args.patterns:
+        rates = load_rates(args.rates) if args.rates else {}
+        attempts = load_attempts(args.patterns, rates)
+        summary["attempts"] = evaluate(attempts, rings, since, until)
+        print("attempts in file: %d | ring versions read: %d | period from %s" % (
+            len(attempts), len(rings), since.strftime(ISO) if since else "the beginning"), file=sys.stderr)
+        print(report(summary["attempts"]))
+    if args.labels:
+        threshold = None
+        if args.models:
+            with open(Path(args.models) / "thresholds.json") as fh:
+                threshold = float(json.load(fh)["ring"])
+        summary["labels"] = label_summary(raw, args.labels, threshold)
+        print()
+        print(label_report(summary["labels"]))
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(summary, fh, indent=1, default=str)

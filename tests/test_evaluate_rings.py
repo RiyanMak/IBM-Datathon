@@ -81,6 +81,28 @@ def test_evaluate_caught_time_to_alert_and_stoppable_money(tmp_path):
     assert "| Caught by a ring" in text and "50%" in text
 
 
+def test_label_summary_scores_rings_against_clean_csv_labels(tmp_path):
+    from scripts.evaluate_rings import label_report, label_summary
+    clean = tmp_path / "clean.csv"
+    clean.write_text("txn_id,ts,label,split\n" + "\n".join(
+        f"{i},2022-09-09T10:0{i % 10}:00,{1 if i in (1, 2, 3, 7) else 0},test" for i in range(10)) + "\n")
+    msgs = [
+        {"ring_id": "R-1", "version": "1", "shape": "fan-out", "edges": json.dumps(
+            [{"txn_id": "1", "score": 0.99}, {"txn_id": "2", "score": 0.99}, {"txn_id": "5", "score": 0.6}])},
+        {"ring_id": "R-1", "version": "2", "shape": "fan-out", "edges": json.dumps(
+            [{"txn_id": "1", "score": 0.99}, {"txn_id": "2", "score": 0.99}, {"txn_id": "3", "score": 0.7}, {"txn_id": "5", "score": 0.6}])},
+        {"ring_id": "R-2", "version": "1", "shape": "other", "edges": json.dumps(
+            [{"txn_id": "8", "score": 0.97}, {"txn_id": "9", "score": 0.96}])},
+    ]
+    s = label_summary(msgs, clean, ring_threshold=0.95)
+    assert s["rings"] == 2 and s["transfers_in_rings"] == 6 and s["laundering_in_rings"] == 3   # latest versions only
+    assert s["rings_mostly_laundering"] == 1 and s["rings_without_laundering"] == 1
+    assert s["laundering_in_period"] == 4 and s["laundering_covered"] == 3
+    assert s["core_precision"] == 0.5 and s["expanded_precision"] == 0.5 and s["expanded_transfers"] == 2
+    assert s["per_shape"]["fan-out"] == {"rings": 1, "mean_precision": 0.75}
+    assert "| Rings (latest versions) | 2 |" in label_report(s)
+
+
 def test_rings_file_and_missing_published_at_fall_back_to_last_seen(tmp_path):
     m = ring("R-0009", 1, "cycle", ["5_C1", "6_C2", "7_C3"], "2022-09-09T22:30:00")
     del m["published_at"]
