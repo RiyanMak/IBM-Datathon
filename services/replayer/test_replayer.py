@@ -66,7 +66,7 @@ def make_rows(timestamps, first_id=0):
     n = len(timestamps)
     return pd.DataFrame({
         "txn_id": pd.Series(range(first_id, first_id + n), dtype="int64"),
-        "ts": pd.to_datetime(timestamps),
+        "ts": pd.to_datetime(timestamps, format="ISO8601"),
         "from_acct": ["10_A%03d" % i for i in range(n)],
         "to_acct": ["20_B%03d" % i for i in range(n)],
         "amount_usd": [0.025852 + i for i in range(n)],

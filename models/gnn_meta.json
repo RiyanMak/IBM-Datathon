@@ -1,0 +1,79 @@
+{
+  "expand_threshold": 0.5,
+  "gnn_threshold": 0.9002075791358948,
+  "validation_pr_auc": 0.6247895055096147,
+  "test": {
+    "XGBoost @ alert": {
+      "precision": 0.8503787878787878,
+      "recall": 0.5570719602977667,
+      "f1": 0.6731634182908546,
+      "pr_auc": 0.7093718764957706,
+      "flagged": 1056.0
+    },
+    "GNN @ its threshold": {
+      "precision": 0.7731397459165155,
+      "recall": 0.2642679900744417,
+      "f1": 0.39389736477115117,
+      "pr_auc": 0.43406636591903835,
+      "flagged": 551.0
+    },
+    "average of both": {
+      "precision": 0.8736141906873615,
+      "recall": 0.24441687344913152,
+      "f1": 0.3819680077556956,
+      "pr_auc": 0.4957815777644293,
+      "flagged": 451.0
+    }
+  },
+  "edge_features": [
+    "log_amount",
+    "is_round",
+    "fmt_ACH",
+    "fmt_Bitcoin",
+    "fmt_Cash",
+    "fmt_Cheque",
+    "fmt_Credit_Card",
+    "fmt_Reinvestment",
+    "fmt_Wire",
+    "cross_currency",
+    "cross_bank",
+    "self_transfer",
+    "hour",
+    "weekday",
+    "snd_in_sum_24h",
+    "snd_out_sum_24h",
+    "pass_through",
+    "mins_since_snd_last_in",
+    "new_payee",
+    "snd_payees_24h",
+    "snd_in_count_24h",
+    "snd_out_count_1h",
+    "amt_vs_snd_avg",
+    "snd_age_days",
+    "rcv_in_sum_24h",
+    "rcv_out_sum_24h",
+    "rcv_pass_through",
+    "mins_since_rcv_last_out",
+    "rcv_payers_24h",
+    "rcv_in_count_24h",
+    "amt_vs_rcv_avg",
+    "rcv_age_days",
+    "xgb_score",
+    "log_amount"
+  ],
+  "node_features": [
+    "log_in_count",
+    "log_out_count",
+    "log_in_usd",
+    "log_out_usd",
+    "mean_in_score",
+    "mean_out_score"
+  ],
+  "trained_on": "candidate subgraph of the validation split, 24-hour blocks",
+  "fit_split": "validation",
+  "seed": 0,
+  "edge_dim": 34,
+  "node_dim": 6,
+  "hidden": 32,
+  "layers": 2
+}

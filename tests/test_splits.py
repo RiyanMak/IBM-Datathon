@@ -16,7 +16,7 @@ from common.splits import (
 
 def ts_from_minutes(minutes):
     return pd.Series(
-        pd.to_datetime([f"2022-09-01 00:{m:02d}" for m in minutes]).astype("datetime64[ns]")
+        pd.to_datetime([f"2022-09-01 00:{m:02d}" for m in minutes], format="ISO8601").astype("datetime64[ns]")
     )
 
 
