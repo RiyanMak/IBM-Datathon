@@ -68,11 +68,12 @@ def _to_epoch_seconds(series: pd.Series) -> np.ndarray:
         s = series.astype(str).str.strip().str.replace("Z", "", regex=False)
         first = s.iloc[0] if len(s) else ""
         if re.match(r"^\d{4}/\d{2}/\d{2} ", first):     # raw Kaggle file
-            dt = pd.to_datetime(s, format="%Y/%m/%d %H:%M", errors="coerce", utc=True)
-        else:
-            # Covers clean.csv's "2022-09-01T00:20:00" and the "2022-09-01"
-            # midnights that older clean.csv files have.
-            dt = pd.to_datetime(s, format="ISO8601", errors="coerce", utc=True)
+            # pandas' strptime-style parsing (format="%Y/%m/%d %H:%M") segfaults on
+            # s390x; the ISO parser does not, so make the text ISO first.
+            s = s.str.replace("/", "-", regex=False)
+        # Covers the raw file (after the replace), clean.csv's "2022-09-01T00:20:00"
+        # and the "2022-09-01" midnights that older clean.csv files have.
+        dt = pd.to_datetime(s, format="ISO8601", errors="coerce", utc=True)
         bad = dt.isna()
         if bad.any():
             dt = dt.copy()
