@@ -112,7 +112,7 @@ Paste this in the team chat so Pair 2 (rings) and Pair 3 (page) build to the sam
 > **Case writer contract (Ayan).**
 > I read `rings` with consumer group `casewriter`. Fields as in the guide: `ring_id, version, shape, n_accounts, accounts, edges, xgb_score, gnn_score, reasons, first_seen, last_seen`, all as text, lists as JSON.
 > **Pair 2:** each edge can be a dict `{"txn_id","from","to","amount_usd","ts","score"}` or a list in that order. Times as `2022-09-08T14:00:00`. Account IDs as `10_8000EBD30`. Please confirm which one you'll send.
-> **Pair 3:** I write `cases` with the guide's fields: `ring_id, version, summary (JSON with summary, what_happened, why_suspicious, possible_victim, suggested_next_step), source (granite/template), check_note, written_at`. I also add one extra field, `facts` (JSON), in case the page wants to show the numbers. Ignore it if not.
+> **Pair 3:** I write `cases` with the guide's fields: `ring_id, version, summary (JSON with summary, what_happened, why_suspicious, possible_victim, suggested_next_step), source (granite/template), check_note, written_at` (UTC, e.g. `2026-10-18T14:02:11+00:00`). Extra fields: `facts` (JSON, the numbers), `ring_last_seen` (data time from the ring) and `written_after_s` (seconds from the ring message to the case). The same fields sit in the hash `case:<ring_id>`, always the latest case for that ring; counters are in `stats:casewriter` (`cases_written, granite_tried, granite_passed`).
 
 ## Step 6: Connect Granite (when you have credentials)
 
@@ -127,7 +127,7 @@ Paste this in the team chat so Pair 2 (rings) and Pair 3 (page) build to the sam
    python3 -m services.casewriter.main --file services/casewriter/fake_rings.json
    ```
    Each ring now prints `source: granite` or `source: template` with a reason. The last line, `Granite passed the fact check in X of Y tries`, goes in the pitch.
-4. **If it always says `granite error`,** read the error text. A `401` means the key is wrong, `404` means a wrong URL or model ID, and a timeout means the VM can't reach watsonx (ask Pair 3). The template still works, so nothing is blocked.
+4. **If it says `granite disabled` or `granite error`,** read the text after it. A `401` means the key is wrong, `404` means a wrong URL or model ID (either one switches Granite off until the service restarts), and a timeout means the VM can't reach watsonx (ask Pair 3). The template still works, so nothing is blocked.
 
 I couldn't test the real Granite connection from here, only the request format. Step 6 is where you find out whether it works.
 

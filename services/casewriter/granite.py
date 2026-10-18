@@ -17,10 +17,60 @@ NEVER committed - it is listed in .gitignore):
 """
 import json
 import os
+import sys
+import time
 
 DEFAULT_MODEL_ID = "ibm/granite-3-8b-instruct"   # check this exists in your watsonx project
 API_VERSION = os.environ.get("WATSONX_API_VERSION", "2024-10-08")
-TIMEOUT_SECONDS = 30
+TIMEOUT_SECONDS = 15   # the guide's limit; a hung network must not hold a ring for long
+
+# IAM tokens live 60 minutes. Reuse one and fetch a new one after about 50, so a call
+# never goes out with a token that expires on the way.
+TOKEN_REFRESH_SECONDS = 50 * 60
+_token = {}   # "value", "refresh_at" (time.time() seconds)
+
+# A 401 or 404 will not fix itself (wrong key, model ID not in the project). After the
+# first one, Granite stays off until restart and every case says why, instead of every
+# ring paying for another failed call.
+_disabled_reason = ""
+
+
+class GraniteDisabled(RuntimeError):
+    """Raised instead of calling watsonx once a 401 or 404 has switched Granite off."""
+    def __init__(self, reason):
+        super().__init__("granite disabled: " + reason)
+        self.reason = reason
+
+
+def disabled_reason():
+    """'' while Granite may be called, else why it was switched off ('404 model_not_supported')."""
+    return _disabled_reason
+
+
+def reset_state():
+    """Forget the cached token and the disabled flag (tests, or after fixing the settings)."""
+    global _disabled_reason
+    _token.clear()
+    _disabled_reason = ""
+
+
+def _disable(resp):
+    """Switch Granite off after a response that will not get better on retry, then raise."""
+    global _disabled_reason
+    code = ""
+    try:
+        body = resp.json()
+        errors = body.get("errors") or [{}]
+        code = errors[0].get("code") or body.get("errorCode") or ""
+    except Exception:
+        pass
+    reason = "%d %s" % (resp.status_code, code or getattr(resp, "reason", "") or "error")
+    reason = reason.strip()
+    if not _disabled_reason:
+        print("granite disabled: %s. Every case uses the template until the service restarts."
+              % reason, file=sys.stderr)
+    _disabled_reason = reason
+    raise GraniteDisabled(reason)
 
 SYSTEM_PROMPT = """You write case summaries for bank fraud investigators.
 Rules:
@@ -171,25 +221,36 @@ def build_messages(facts):
 
 
 def _iam_token(api_key):
+    """A cached IAM token; a new one only when the old one is about 50 minutes old."""
+    if _token and time.time() < _token["refresh_at"]:
+        return _token["value"]
     import requests
     resp = requests.post(
         "https://iam.cloud.ibm.com/identity/token",
         data={"grant_type": "urn:ibm:params:oauth:grant-type:apikey", "apikey": api_key},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=TIMEOUT_SECONDS)
+    if resp.status_code in (400, 401):   # IAM answers 400 for an unknown API key
+        _disable(resp)
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    data = resp.json()
+    # refresh early: at 50 minutes, or a minute before expiry if IAM ever issues shorter tokens
+    lifetime = float(data.get("expires_in") or 3600)
+    _token.update(value=data["access_token"],
+                  refresh_at=time.time() + min(TOKEN_REFRESH_SECONDS, max(lifetime - 60, 0)))
+    return _token["value"]
 
 
 def call_granite(facts):
     """Send the facts to Granite and return its raw reply text: watsonx when configured,
-    otherwise the local llama.cpp model."""
+    otherwise the local llama.cpp model. Raises GraniteDisabled after a 401 or 404."""
     if not watsonx_configured():
         if local_configured():
             return call_granite_local(facts)
         raise RuntimeError("Granite is not configured: no watsonx credentials and no local GGUF")
+    if _disabled_reason:
+        raise GraniteDisabled(_disabled_reason)
     import requests
-    token = _iam_token(api_key())
     url = os.environ["WATSONX_URL"].rstrip("/") + "/ml/v1/text/chat?version=" + API_VERSION
     body = {
         "model_id": os.environ.get("GRANITE_MODEL_ID", DEFAULT_MODEL_ID),
@@ -198,9 +259,18 @@ def call_granite(facts):
         "max_tokens": 300,
         "temperature": 0,
     }
-    resp = requests.post(url, json=body, timeout=TIMEOUT_SECONDS,
-                         headers={"Authorization": "Bearer " + token,
-                                  "Content-Type": "application/json"})
+
+    def post():
+        return requests.post(url, json=body, timeout=TIMEOUT_SECONDS,
+                             headers={"Authorization": "Bearer " + _iam_token(api_key()),
+                                      "Content-Type": "application/json"})
+    resp = post()
+    if resp.status_code == 401:
+        # the cached token may have been revoked early: one try with a fresh one
+        _token.clear()
+        resp = post()
+    if resp.status_code in (401, 404):
+        _disable(resp)
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 

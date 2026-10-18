@@ -133,6 +133,16 @@ def test_case_ordering_granite_beats_template_at_same_version(r):
     assert state.latest_case(r, "R-1").source == "granite"
 
 
+def test_latest_case_reads_the_case_hash_first(r):
+    r.xadd(bus.CASES, case_msg("R-1", 1, "granite", check_note="passed fact check"))
+    r.hset("case:R-1", mapping=case_msg("R-1", 2, "granite", check_note="reused v1 summary",
+                                        written_at="2026-10-18T14:02:11+00:00"))
+    case = state.latest_case(r, "R-1")
+    assert (case.version, case.received_ms, case.written_at) == (2, 0, "2026-10-18T14:02:11+00:00")
+    assert case.reused and case.fact_checked        # a reused Granite summary passed when first written
+    assert state.latest_case(r, "R-2") is None      # no hash, nothing on the stream
+
+
 def test_case_ordering_newer_version_wins(r):
     r.xadd(bus.CASES, case_msg("R-1", 1, "granite"))
     r.xadd(bus.CASES, case_msg("R-1", 2, "template"))
@@ -223,12 +233,24 @@ def test_write_decision_and_read_back(r):
     decisions.write(r, "R-1", 2, "more_info", "  check the collector  ")
     decisions.write(r, "R-1", 2, "Freeze", "confirmed")
     (_id, msg), = r.xrevrange(bus.DECISIONS, count=1)
-    assert set(msg) == {"ring_id", "version", "decision", "note", "decided_at"}
+    assert set(msg) == {"ring_id", "version", "decision", "note", "decided_at", "channel", "decided_by"}
+    assert (msg["channel"], msg["decided_by"]) == ("page", "")
     assert msg["decided_at"].endswith("+00:00")
     snap = state.load(r)
     d = snap.decisions["R-1"]
     assert (d.decision, d.version, d.note, d.label) == ("freeze", 2, "confirmed", "Freeze recorded")
     assert (snap.counters.total_rings, snap.counters.open_rings) == (2, 1)
+
+
+def test_decision_from_another_channel(r):
+    decisions.write(r, "R-1", 3, "freeze", "from the alert", channel="slack",
+                    decided_by="slack:U0123ABC:jane.doe")
+    (_id, msg), = r.xrange(bus.DECISIONS)
+    assert (msg["channel"], msg["decided_by"]) == ("slack", "slack:U0123ABC:jane.doe")
+    d = state.load(r).decisions["R-1"]
+    assert (d.channel, d.decided_by, d.version) == ("slack", "slack:U0123ABC:jane.doe", 3)
+    old = state.parse_decision({"ring_id": "R-2", "decision": "dismiss"})   # written before the extras
+    assert (old.channel, old.decided_by) == ("", "")
 
 
 def test_decision_note_is_trimmed():
@@ -304,6 +326,8 @@ def test_display_formats():
     assert fmt.span_hours("x", "2022-09-08T18:44:00") == ""
     assert fmt.wall_time("2026-10-17T21:30:01.396+00:00") == "2026-10-17 21:30 UTC"
     assert fmt.wall_time("2026-10-17T10:00:00") == "2026-10-17 10:00"     # no zone: none shown
+    assert fmt.wall_time("2026-10-18T14:02:11+00:00") == "2026-10-18 14:02 UTC"   # case writer's written_at
+    assert fmt.wall_time("2026-10-18T16:02:11+02:00") == "2026-10-18 14:02 UTC"
     assert fmt.wall_time("garbage") == "garbage"
     assert fmt.plural(1, "account") == "1 account" and fmt.plural(2, "account") == "2 accounts"
     assert fmt.count(12345) == "12,345" and fmt.count(None) == fmt.DASH

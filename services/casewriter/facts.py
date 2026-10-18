@@ -103,6 +103,9 @@ def parse_ring(fields):
         "xgb_score": _number(f.get("xgb_score")),
         "gnn_score": _number(f.get("gnn_score")),
         "reasons": [str(r) for r in _json_field(f.get("reasons"), [])],
+        # data time as the ring service sent it; copied onto the case so time-to-alert
+        # can be measured in data time
+        "last_seen": str(f.get("last_seen") or ""),
     }
 
 
@@ -147,13 +150,17 @@ def build_facts(ring):
     received = money_in[key]
     sent = money_out[key]
     first_in = min((e["ts"] for e in edges if e["to"] == key), default=None)
-    first_out = None
+    first_out = last_out = None
     if first_in is not None:
-        first_out = min((e["ts"] for e in edges
-                         if e["from"] == key and e["ts"] >= first_in), default=None)
-    hours_to_pass_on = None
+        outs = [e["ts"] for e in edges if e["from"] == key and e["ts"] >= first_in]
+        if outs:
+            first_out, last_out = min(outs), max(outs)
+    # Two durations: how fast the key account started passing money on (first in to
+    # first out), and how long it took to pass it all on (first in to last out).
+    hours_to_pass_on = hours_to_pass_on_all = None
     if first_in is not None and first_out is not None:
         hours_to_pass_on = (first_out - first_in).total_seconds() / 3600
+        hours_to_pass_on_all = (last_out - first_in).total_seconds() / 3600
 
     # Collector = where the money ends up; origin = where it comes from.
     net = {a: money_in[a] - money_out[a] for a in accounts}
@@ -190,6 +197,7 @@ def build_facts(ring):
         "key_sent_usd": round(sent),
         "passed_on_pct": round(100 * sent / received) if received > 0 else None,
         "hours_to_pass_on": _round_or_none(hours_to_pass_on, 1),
+        "hours_to_pass_on_all": _round_or_none(hours_to_pass_on_all, 1),
         "key_payees": len({e["to"] for e in edges if e["from"] == key}),
         "key_senders": len({e["from"] for e in edges if e["to"] == key}),
         "origin": origin,

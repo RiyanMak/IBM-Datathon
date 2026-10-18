@@ -138,8 +138,14 @@ class CaseView:
         return self.source == "granite"
 
     @property
+    def reused(self) -> bool:
+        """The case writer re-sent an earlier version's summary because only the clock moved."""
+        return self.check_note.strip().lower().startswith("reused v")
+
+    @property
     def fact_checked(self) -> bool:
-        return self.is_granite and self.check_note.strip().lower() == "passed fact check"
+        # a reused Granite summary passed the check when it was first written
+        return self.is_granite and (self.check_note.strip().lower() == "passed fact check" or self.reused)
 
 
 @dataclass
@@ -149,6 +155,8 @@ class DecisionView:
     decision: str
     note: str
     decided_at: str
+    channel: str = ""        # "page" or "slack"; older decisions carry none
+    decided_by: str = ""     # who decided, e.g. "slack:U0123ABC:jane.doe"; empty from the page
 
     @property
     def label(self) -> str:

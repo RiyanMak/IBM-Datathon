@@ -11,6 +11,7 @@ Run from the repo root, with a local Redis (REDIS_HOST=localhost):
   python -m services.page.fake.feed --decisions        # also 2 decisions, to see the badges
   python -m services.page.fake.feed --fake-upgrade 10  # 10 s later, relabel one case as granite
   python -m services.page.fake.feed --live             # keep adding scored rows so counters move
+  python -m services.page.fake.feed --bump R-0001      # re-send one ring: version + 1, one more transfer
   python -m services.page.fake.feed --reset            # delete the 5 streams first (fake data only)
 
 Delete this folder once the real stack runs end to end.
@@ -24,7 +25,9 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from common import bus
-from services.casewriter.casewriter import push_fake, ring_to_stream_fields, write_case
+from services.casewriter.casewriter import (
+    CASE_KEY, push_fake, ring_to_stream_fields, store_case, write_case,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RINGS_FILE = os.path.join(HERE, "..", "..", "casewriter", "fake_rings.json")
@@ -138,10 +141,54 @@ def load_rings(path):
 
 
 def push_cases(r, rings):
-    """Template cases, made by the real case writer code (no Granite)."""
+    """Template cases, made and stored by the real case writer code (no Granite): on the
+    `cases` stream and in the `case:<ring_id>` hash, exactly as the service does."""
     for ring in rings:
-        r.xadd(bus.CASES, write_case(ring_to_stream_fields(ring), use_granite=False))
+        store_case(r, write_case(ring_to_stream_fields(ring), use_granite=False))
     return len(rings)
+
+
+def newest_ring(r, ring_id, rings):
+    """The newest copy of a fake ring: from the `rings` stream if it is there, else the file."""
+    if not str(ring_id).startswith(FAKE_RING_PREFIXES):
+        raise ValueError("%s is not a fake ring ID" % ring_id)   # never touch a real ring
+    best = None
+    for _id, fields in r.xrevrange(bus.RINGS, "+", "-", count=1000):
+        if fields.get("ring_id") != ring_id:
+            continue
+        version = int(float(fields.get("version") or 0))
+        if best is None or version > best["version"]:
+            best = {k: (json.loads(v) if k in ("accounts", "edges", "reasons") and v else v)
+                    for k, v in fields.items()}
+            best["version"] = version
+    if best is None:
+        best = next((dict(ring) for ring in rings if ring["ring_id"] == ring_id), None)
+    if best is None:
+        raise ValueError("%s is not a fake ring in the rings file or on '%s'" % (ring_id, bus.RINGS))
+    return best
+
+
+def bump_ring(r, ring_id, rings):
+    """Re-send a fake ring with version + 1 and one more transfer, plus its template case.
+
+    The extra transfer repeats the ring's last link ten data-minutes later, so the page's
+    "latest version wins" path can be watched without a real ring service.
+    """
+    ring = newest_ring(r, ring_id, rings)
+    last = ring["edges"][-1]
+    as_list = isinstance(last, (list, tuple))
+    src, dst, ts = (last[1], last[2], last[4]) if as_list else (last["from"], last["to"], last["ts"])
+    ring["version"] = int(ring["version"]) + 1
+    new_ts = (datetime.fromisoformat(str(ts)) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
+    txn_id = "%sBUMP-%s-%d" % (FAKE_TXN_PREFIX, ring_id, ring["version"])
+    edge = [txn_id, src, dst, 250.0, new_ts, 0.6]
+    ring["edges"] = list(ring["edges"]) + [edge if as_list else dict(zip(
+        ("txn_id", "from", "to", "amount_usd", "ts", "score"), edge))]
+    ring["last_seen"] = new_ts
+    fields = ring_to_stream_fields(ring)
+    r.xadd(bus.RINGS, fields)
+    store_case(r, write_case(fields, use_granite=False))
+    return ring
 
 
 def push_fake_upgrade(r, ring):
@@ -199,6 +246,10 @@ def reset(r, force=False):
         return False
     r.delete(*bus.STREAMS)
     r.delete("page:feed_mode")
+    # the latest-case hashes of fake rings, or the page would keep showing them
+    stale = [k for k in r.scan_iter(CASE_KEY % "*") if k[len(CASE_KEY % ""):].startswith(FAKE_RING_PREFIXES)]
+    if stale:
+        r.delete(*stale)
     print("deleted streams: %s" % ", ".join(bus.STREAMS))
     return True
 
@@ -215,11 +266,23 @@ def main(argv=None):
     p.add_argument("--reset", action="store_true", help="delete the 5 streams first (refuses on real data)")
     p.add_argument("--force", action="store_true", help="with --reset, delete even if real data is found")
     p.add_argument("--seed", type=int, default=None, help="random seed, for repeatable rows")
+    p.add_argument("--bump", metavar="RING_ID",
+                   help="only re-send this fake ring with version + 1 and one more transfer, then stop")
     args = p.parse_args(argv)
 
     r = bus.connect()
     rng = random.Random(args.seed)
     print("Redis at %s:%d" % (bus.redis_host(), bus.redis_port()))
+
+    if args.bump:
+        try:
+            ring = bump_ring(r, args.bump, load_rings(args.rings))
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print("pushed %s version %d (%d transfers) and its template case" % (
+            ring["ring_id"], ring["version"], len(ring["edges"])))
+        return 0
 
     if args.reset and not reset(r, args.force):
         return 1

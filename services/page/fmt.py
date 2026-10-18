@@ -155,9 +155,9 @@ def span_hours(first: str, last: str) -> str:
 
 
 def wall_time(text: str) -> str:
-    """Wall-clock time -> '2026-10-17 10:42 UTC'. A time written without a zone
-    (the case writer's local written_at) is shown without one rather than mislabelled.
-    Unreadable text comes back as it is."""
+    """Wall-clock time -> '2026-10-17 10:42 UTC'. Any zone is converted to UTC. A time
+    written without a zone (cases from before the case writer wrote UTC) is shown
+    without one rather than mislabelled. Unreadable text comes back as it is."""
     try:
         dt = datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
         if dt.tzinfo is None:

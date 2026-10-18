@@ -59,7 +59,7 @@ def test_state_lists_rings_with_decisions_and_cases(client):
     by_id = {x["ring_id"]: x for x in s["rings"]}
     assert set(by_id) == {"R-1", "R-2"}
     assert by_id["R-1"]["shape_label"] == "Scatter-gather" and by_id["R-1"]["has_case"] and by_id["R-1"]["decision"] is None
-    assert by_id["R-2"]["decision"]["label"] == "Frozen" and by_id["R-2"]["gnn_score"] == "–"
+    assert by_id["R-2"]["decision"]["label"] == "Freeze recorded" and by_id["R-2"]["gnn_score"] == "–"
     assert s["open_rings"] == 1
 
 
@@ -80,12 +80,12 @@ def test_decide_writes_the_stream_and_rejects_bad_input(client):
     c, r = client
     r.xadd(bus.RINGS, ring_msg())
     ok = c.post("/api/decide", json={"ring_id": "R-1", "version": 1, "decision": "freeze", "note": "mule M"})
-    assert ok.status_code == 200 and ok.get_json()["label"] == "Frozen"
+    assert ok.status_code == 200 and ok.get_json()["label"] == "Freeze recorded"
     saved = r.xrange(bus.DECISIONS, "-", "+")[0][1]
     assert saved["ring_id"] == "R-1" and saved["decision"] == "freeze" and saved["note"] == "mule M" and saved["version"] == "1"
     bad = c.post("/api/decide", json={"ring_id": "R-1", "version": 1, "decision": "shrug"})
     assert bad.status_code == 400 and "decision must be one of" in bad.get_json()["error"]
-    assert c.get("/api/state").get_json()["rings"][0]["decision"]["label"] == "Frozen"
+    assert c.get("/api/state").get_json()["rings"][0]["decision"]["label"] == "Freeze recorded"
 
 
 def test_page_survives_redis_being_down():

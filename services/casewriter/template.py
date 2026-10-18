@@ -84,8 +84,11 @@ def template_summary(f):
         n=f["n_accounts"], total=money(f["total_usd"]), t=f["n_transfers"],
         a=when(f["first_seen"]), b=when(f["last_seen"]), shape=shape_label(f["shape"]))
     if f["passed_on_pct"] is not None and f["hours_to_pass_on"] is not None:
-        s2 = "Account {k} received {r} and passed on {p}% of it, starting within {h} hours.".format(
-            k=key, r=money(f["key_received_usd"]), p=f["passed_on_pct"], h=f["hours_to_pass_on"])
+        # hours_to_pass_on_all is set whenever hours_to_pass_on is (both start at the first incoming)
+        s2 = ("Account {k} received {r}, began passing it on within {h} hours and had moved "
+              "{p}% of it within {ha} hours.").format(
+            k=key, r=money(f["key_received_usd"]), h=f["hours_to_pass_on"],
+            p=f["passed_on_pct"], ha=f["hours_to_pass_on_all"])
     elif f["key_sent_usd"] > 0:
         s2 = "Account {k} sent {s} to {n} accounts.".format(
             k=key, s=money(f["key_sent_usd"]), n=f["key_payees"])
