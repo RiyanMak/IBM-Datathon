@@ -12,6 +12,7 @@ Settings come from environment variables (put them in a .env file that is
 NEVER committed - it is listed in .gitignore):
   WATSONX_APIKEY       your IBM Cloud API key (WATSONX_API_KEY is accepted too)
   WATSONX_PROJECT_ID   your watsonx project ID
+  WATSONX_SPACE_ID     or a deployment space ID instead of the project (used when set)
   WATSONX_URL          region URL, e.g. https://us-south.ml.cloud.ibm.com
   GRANITE_MODEL_ID     the Granite model available to you (ask the organizers / check the lab)
 """
@@ -20,7 +21,7 @@ import os
 import sys
 import time
 
-DEFAULT_MODEL_ID = "ibm/granite-3-8b-instruct"   # check this exists in your watsonx project
+DEFAULT_MODEL_ID = "ibm/granite-4-h-small"   # granite-3-8b-instruct was withdrawn; check the project's list
 API_VERSION = os.environ.get("WATSONX_API_VERSION", "2024-10-08")
 TIMEOUT_SECONDS = 15   # the guide's limit; a hung network must not hold a ring for long
 
@@ -102,8 +103,21 @@ def api_key():
     return os.environ.get("WATSONX_APIKEY") or os.environ.get("WATSONX_API_KEY") or ""
 
 
+def scope():
+    """Where watsonx bills the call: {"space_id": ...} or {"project_id": ...}, or {} if neither is set.
+
+    A deployment space works when the project UI cannot attach a Runtime (the space
+    is made through the REST API with the Runtime's CRN). The space wins if both are set.
+    """
+    if os.environ.get("WATSONX_SPACE_ID"):
+        return {"space_id": os.environ["WATSONX_SPACE_ID"]}
+    if os.environ.get("WATSONX_PROJECT_ID"):
+        return {"project_id": os.environ["WATSONX_PROJECT_ID"]}
+    return {}
+
+
 def watsonx_configured():
-    return bool(api_key()) and all(os.environ.get(k) for k in ("WATSONX_PROJECT_ID", "WATSONX_URL"))
+    return bool(api_key()) and bool(scope()) and bool(os.environ.get("WATSONX_URL"))
 
 
 # --- Granite on the machine itself, through llama.cpp -----------------------------
@@ -254,11 +268,11 @@ def call_granite(facts):
     url = os.environ["WATSONX_URL"].rstrip("/") + "/ml/v1/text/chat?version=" + API_VERSION
     body = {
         "model_id": os.environ.get("GRANITE_MODEL_ID", DEFAULT_MODEL_ID),
-        "project_id": os.environ["WATSONX_PROJECT_ID"],
         "messages": build_messages(facts),
         "max_tokens": 300,
         "temperature": 0,
     }
+    body.update(scope())
 
     def post():
         return requests.post(url, json=body, timeout=TIMEOUT_SECONDS,

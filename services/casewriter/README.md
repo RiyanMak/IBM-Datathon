@@ -128,6 +128,12 @@ Paste this in the team chat so Pair 2 (rings) and Pair 3 (page) build to the sam
    ```
    Each ring now prints `source: granite` or `source: template` with a reason. The last line, `Granite passed the fact check in X of Y tries`, goes in the pitch.
 4. **If it says `granite disabled` or `granite error`,** read the text after it. A `401` means the key is wrong, `404` means a wrong URL or model ID (either one switches Granite off until the service restarts), and a timeout means the VM can't reach watsonx (ask Pair 3). The template still works, so nothing is blocked.
+5. **A `403` with `no_associated_service_instance_error`** means the project has no watsonx.ai Runtime attached. If the project's "Associate service" dialog shows no instances (it happened on a fresh account), make a deployment space through the REST API with the Runtime's CRN and put its ID in `.env` as `WATSONX_SPACE_ID`; the case writer then sends `space_id` instead of `project_id`. With a token from the API key:
+   ```
+   curl -s -H "Authorization: Bearer $TOKEN" "https://resource-controller.cloud.ibm.com/v2/resource_instances?type=service_instance"   # find the Runtime's crn
+   curl -s -X POST https://api.dataplatform.cloud.ibm.com/v2/spaces -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{"name":"mule-ring-hunter","compute":[{"name":"<runtime name>","crn":"<runtime crn>"}]}'   # metadata.id is the space ID
+   ```
 
 I couldn't test the real Granite connection from here, only the request format. Step 6 is where you find out whether it works.
 

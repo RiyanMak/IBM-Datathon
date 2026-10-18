@@ -428,6 +428,56 @@ def test_granite_token_is_reused_and_calls_time_out_at_15s():
     with_fake_watsonx(200, run)
 
 
+def test_granite_bills_a_space_instead_of_the_project_when_one_is_set():
+    """WATSONX_SPACE_ID (a deployment space made through the REST API) replaces project_id in
+    the call; without it the project is sent, and neither set means not configured."""
+    import os
+    import sys
+    import types
+    from services.casewriter import granite
+
+    bodies = []
+
+    def post(url, timeout=None, json=None, **kw):
+        bodies.append(json)
+        if "iam.cloud.ibm.com" in url:
+            return FakeResponse(200, {"access_token": "tok", "expires_in": 3600})
+        return FakeResponse(200, {"choices": [{"message": {"content": "{}"}}]})
+
+    names = ("WATSONX_APIKEY", "WATSONX_PROJECT_ID", "WATSONX_SPACE_ID", "WATSONX_URL")
+    saved_env = {k: os.environ.get(k) for k in names}
+    saved_requests = sys.modules.get("requests")
+    sys.modules["requests"] = types.SimpleNamespace(post=post)
+    granite.reset_state()
+    try:
+        os.environ.update({"WATSONX_APIKEY": "k", "WATSONX_PROJECT_ID": "p", "WATSONX_URL": "https://x"})
+        os.environ.pop("WATSONX_SPACE_ID", None)
+        granite.call_granite({"ring_id": "R-1"})
+        chat = [b for b in bodies if b is not None][-1]
+        assert chat["project_id"] == "p" and "space_id" not in chat
+
+        os.environ["WATSONX_SPACE_ID"] = "s"
+        granite.call_granite({"ring_id": "R-1"})
+        chat = [b for b in bodies if b is not None][-1]
+        assert chat["space_id"] == "s" and "project_id" not in chat
+
+        os.environ.pop("WATSONX_PROJECT_ID")
+        assert granite.watsonx_configured()
+        os.environ.pop("WATSONX_SPACE_ID")
+        assert not granite.watsonx_configured()
+    finally:
+        granite.reset_state()
+        if saved_requests is None:
+            sys.modules.pop("requests", None)
+        else:
+            sys.modules["requests"] = saved_requests
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 def test_granite_404_switches_it_off_for_every_later_case():
     from services.casewriter import granite
 
