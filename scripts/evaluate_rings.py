@@ -15,6 +15,12 @@ Usage (from the repo root):
 (share of ring transfers that are laundering, share of all test-period laundering that
 sits in a ring, precision of core versus expanded transfers).
 
+--gnn-sweep measures what the GNN adds. Replay once with the ring service publishing
+every ring (no GNN threshold), then the sweep keeps, for each threshold, only the ring
+versions whose gnn_score is at or above it (exactly what --gnn-threshold in the ring
+service would publish) and reports the numbers again. The "no GNN" row is the baseline:
+  python -m scripts.evaluate_rings --labels data/processed/clean.csv --patterns ... --redis --gnn-sweep
+
 Definitions (from the team guide):
   caught          a ring catches an attempt when at least half of the ring's accounts belong
                   to the attempt. We also report the softer "covered": at least half of the
@@ -42,6 +48,7 @@ from services.casewriter.patterns_to_rings import load_rates, read_attempts
 
 RAW_TS = "%Y/%m/%d %H:%M"
 ISO = "%Y-%m-%dT%H:%M:%S"
+GNN_SWEEP = (0.1, 0.3, 0.5, 0.7, 0.9)
 SHAPE_NAMES = {"fan-out": "fan-out", "fan-in": "fan-in", "cycle": "cycle", "scatter-gather": "scatter-gather",
                "gather-scatter": "gather-scatter", "bipartite": "bipartite", "stack": "stack", "random": "other"}
 
@@ -100,7 +107,21 @@ def parse_ring_message(fields) -> dict:
         "shape": normalise_shape(fields.get("shape", "")),
         "accounts": set(accounts),
         "published_at": datetime.strptime(published, ISO) if published else None,
+        "gnn_score": gnn_score_of(fields),
     }
+
+
+def gnn_score_of(fields):
+    """The ring's gnn_score as a float, or None when the ring service sent it empty."""
+    raw = fields.get("gnn_score")
+    return float(raw) if raw not in (None, "") else None
+
+
+def passes_gnn(fields, threshold) -> bool:
+    """Would the ring service publish this version with --gnn-threshold threshold?
+    The same rule as RingService.gnn_dropped: an empty gnn_score is never held back."""
+    score = gnn_score_of(fields)
+    return threshold is None or score is None or score >= threshold
 
 
 def rings_from_redis(r, stream="rings") -> list:
@@ -199,24 +220,29 @@ def evaluate(attempts, ring_versions, since=None, until=None) -> dict:
     }
 
 
-def label_summary(ring_messages, clean_csv, ring_threshold=None) -> dict:
+def load_labels(clean_csv):
+    """(txn_id -> label, number of laundering transfers) for the test period of clean.csv."""
+    import pandas as pd
+
+    labels = pd.read_csv(clean_csv, usecols=["txn_id", "label", "split", "ts"], dtype={"txn_id": str, "label": "int8"})
+    period = labels[labels.split == "test"] if "test" in set(labels.split) else labels
+    return dict(zip(period.txn_id, period.label)), int(period.label.sum())
+
+
+def label_summary(ring_messages, clean_csv=None, ring_threshold=None, labels=None) -> dict:
     """Ring quality against the transfer labels in clean.csv (available without the patterns file).
 
     Uses the latest version of every ring. Reports the share of ring transfers labelled
     laundering, the share of rings that are mostly laundering, the share of all laundering
     transfers in the period that sit in some ring, and, when ring_threshold is given, the
     precision of core transfers (score >= ring_threshold) versus expanded ones.
+    labels: the result of load_labels, to read clean.csv only once for several summaries.
     """
-    import pandas as pd
-
     latest = {}
     for f in ring_messages:
         if int(f.get("version") or 1) >= int(latest.get(f["ring_id"], {}).get("version") or 0):
             latest[f["ring_id"]] = f
-    labels = pd.read_csv(clean_csv, usecols=["txn_id", "label", "split", "ts"], dtype={"txn_id": str, "label": "int8"})
-    period = labels[labels.split == "test"] if "test" in set(labels.split) else labels
-    label_of = dict(zip(period.txn_id, period.label))
-    n_laundering = int(period.label.sum())
+    label_of, n_laundering = labels if labels is not None else load_labels(clean_csv)
 
     kinds = {"core": [0, 0], "expanded": [0, 0]}
     rings, in_ring = [], set()
@@ -257,6 +283,59 @@ def label_summary(ring_messages, clean_csv, ring_threshold=None) -> dict:
         "per_shape": {k: {"rings": v["rings"], "mean_precision": v["precision_sum"] / v["rings"]}
                       for k, v in sorted(by_shape.items())},
     }
+
+
+def gnn_sweep(raw, thresholds=GNN_SWEEP, attempts=None, since=None, until=None, labels=None,
+              ring_threshold=None) -> list:
+    """The evaluation repeated with only the ring versions the GNN would let through.
+
+    raw: the rings messages as published with no GNN threshold. One row per threshold,
+    the first (threshold None) is the baseline without the GNN. Attempt numbers need
+    attempts (load_attempts), label numbers need labels (load_labels).
+    """
+    rows = []
+    for t in (None, *thresholds):
+        kept = [f for f in raw if passes_gnn(f, t)]
+        row = {"gnn_threshold": t, "ring_versions": len(kept), "rings": len({f["ring_id"] for f in kept})}
+        if attempts is not None:
+            s = evaluate(attempts, [parse_ring_message(f) for f in kept], since, until)
+            row.update(attempts_caught=s["caught"], caught_share=s["caught_share"],
+                       rings_matching_an_attempt=s["rings_matching_an_attempt"],
+                       ring_attempt_precision=s["rings_matching_an_attempt"] / s["rings_total"] if s["rings_total"] else None,
+                       minutes_to_alert_median=s["minutes_to_alert_median"])
+        if labels is not None:
+            s = label_summary(kept, ring_threshold=ring_threshold, labels=labels)
+            row.update(ring_transfer_precision=s["ring_transfer_precision"],
+                       rings_mostly_laundering=s["rings_mostly_laundering"],
+                       rings_mostly_laundering_share=s["rings_mostly_laundering"] / s["rings"] if s["rings"] else None,
+                       rings_without_laundering=s["rings_without_laundering"],
+                       laundering_covered_share=s["laundering_covered_share"])
+        rows.append(row)
+    return rows
+
+
+def sweep_report(rows) -> str:
+    has_attempts = "attempts_caught" in rows[0]
+    has_labels = "ring_transfer_precision" in rows[0]
+    head = ["GNN threshold", "Rings"]
+    if has_attempts:
+        head += ["Attempts caught", "Rings matching an attempt", "Minutes to alert (median)"]
+    if has_labels:
+        head += ["Rings mostly laundering", "Rings with no laundering", "Ring transfers laundering",
+                 "Laundering in a ring"]
+    lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+    for r in rows:
+        cells = ["no GNN" if r["gnn_threshold"] is None else "%.2f" % r["gnn_threshold"], "%d" % r["rings"]]
+        if has_attempts:
+            cells += ["%d (%s)" % (r["attempts_caught"], pct(r["caught_share"])),
+                      "%d (%s)" % (r["rings_matching_an_attempt"], pct(r["ring_attempt_precision"])),
+                      num(r["minutes_to_alert_median"])]
+        if has_labels:
+            cells += ["%d (%s)" % (r["rings_mostly_laundering"], pct(r["rings_mostly_laundering_share"])),
+                      "%d" % r["rings_without_laundering"], pct(r["ring_transfer_precision"]),
+                      pct(r["laundering_covered_share"])]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
 
 
 def label_report(s) -> str:
@@ -326,9 +405,18 @@ def main(argv=None):
     src.add_argument("--rings-file", help="JSON lines, one rings message per line")
     p.add_argument("--stream", default="rings")
     p.add_argument("--out", help="write the summary as JSON here")
+    p.add_argument("--gnn-sweep", nargs="?", const=",".join("%g" % t for t in GNN_SWEEP),
+                   help="repeat the numbers keeping only rings with gnn_score at or above each of these "
+                        "comma-separated thresholds (default when given alone: %(const)s)")
     args = p.parse_args(argv)
     if not args.patterns and not args.labels:
         p.error("give --patterns and/or --labels")
+    sweep = None
+    if args.gnn_sweep:
+        try:
+            sweep = [float(x) for x in args.gnn_sweep.split(",") if x.strip()]
+        except ValueError:
+            p.error("--gnn-sweep takes comma-separated numbers, e.g. 0.3,0.5,0.7")
 
     since = until = None
     if args.splits:
@@ -349,6 +437,7 @@ def main(argv=None):
     rings = [parse_ring_message(f) for f in raw]
 
     summary = {}
+    attempts = labels = threshold = None
     if args.patterns:
         rates = load_rates(args.rates) if args.rates else {}
         attempts = load_attempts(args.patterns, rates)
@@ -357,13 +446,21 @@ def main(argv=None):
             len(attempts), len(rings), since.strftime(ISO) if since else "the beginning"), file=sys.stderr)
         print(report(summary["attempts"]))
     if args.labels:
-        threshold = None
         if args.models:
             with open(Path(args.models) / "thresholds.json") as fh:
                 threshold = float(json.load(fh)["ring"])
-        summary["labels"] = label_summary(raw, args.labels, threshold)
+        labels = load_labels(args.labels)
+        summary["labels"] = label_summary(raw, ring_threshold=threshold, labels=labels)
         print()
         print(label_report(summary["labels"]))
+    if sweep is not None:
+        scored = sum(1 for f in raw if gnn_score_of(f) is not None)
+        print("\nGNN sweep: %d of %d ring versions carry a gnn_score" % (scored, len(raw)), file=sys.stderr)
+        if not scored:
+            print("no ring has a gnn_score: train the GNN (scripts/train_gnn.py) and replay again", file=sys.stderr)
+        summary["gnn_sweep"] = gnn_sweep(raw, sweep, attempts, since, until, labels, threshold)
+        print()
+        print(sweep_report(summary["gnn_sweep"]))
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(summary, fh, indent=1, default=str)

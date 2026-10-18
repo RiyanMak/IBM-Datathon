@@ -7,7 +7,7 @@ Updated October 17, 2026, after the replayer, case writer and investigator page 
 | Cleaning (`scripts/clean_data.py`) | Done. Verified on the real file: 5,078,345 rows, 5,177 laundering. |
 | 1 Replayer (`services/replayer/`) | Done. Tested against a real Redis with the real clean file. |
 | 2+3 Scorer (`services/scorer/`) | Done. Tested with the replayer on a real Redis: keeps up with speed 600 on a laptop, p99 latency 38 ms. |
-| 4 Rings + GNN (`services/rings/`) | Grouping done (window, union-find, hubs, Louvain, shapes, stable ids, one-hop expansion, rings keep their transfers). Tested behind the scorer on a real Redis; the case writer and page read its output. GNN not started. |
+| 4 Rings + GNN (`services/rings/`) | Grouping done (window, union-find, hubs, Louvain, shapes, stable ids, one-hop expansion, rings keep their transfers). Tested behind the scorer on a real Redis; the case writer and page read its output. GNN built and wired in (`common/gnn.py`, `scripts/train_gnn.py`, optional `--gnn-threshold`); not yet trained on the real data, so no GNN numbers yet. |
 | Ring-level evaluation (`scripts/evaluate_rings.py`) | Done and tested. Needs `HI-Small_Patterns.txt` (Kaggle) to run on the real replay; see section 4. |
 | 5 Case writer (`services/casewriter/`) | Done. |
 | 6 Investigator page (`services/page/`) | Done. |
@@ -68,7 +68,13 @@ Part A, grouping:
 - Name the shape with the rules in the guide, most specific first: scatter-gather, cycle, gather-scatter, bipartite, stack, fan-out, fan-in, other.
 - Ring score = mean score of its transfers.
 
-Part B, the GNN: built (`common/gnn.py`, `scripts/train_gnn.py`). Plain PyTorch, two message-passing layers with `index_add_` over incoming and outgoing transfers separately, an edge classifier on [sender, receiver, clues], `BCEWithLogitsLoss` with `pos_weight`, early stopping on validation PR-AUC. It trains on the candidate subgraph (transfers XGBoost scores at or above 0.5: about 116,000 train transfers with 2 % laundering, 18,000 test transfers with 8.6 %), which is exactly what the ring service holds in its window. Weights are saved as `gnn.npz` (NumPy records byte order, so a laptop file loads on s390x) plus `gnn_meta.json`. The ring service loads them automatically when present and writes a `gnn_score` per ring; `--no-gnn` turns it off.
+Part B, the GNN: built (`common/gnn.py`, `scripts/train_gnn.py`). Plain PyTorch, two message-passing layers with `index_add_` over incoming and outgoing transfers separately, an edge classifier on [sender, receiver, clues], `BCEWithLogitsLoss` with `pos_weight`, early stopping on validation PR-AUC. It trains on the candidate subgraph (transfers XGBoost scores at or above 0.5), which is exactly what the ring service holds in its window. Two choices keep training honest:
+- It learns from the validation split (first 75 % by time; the last 25 % for early stopping and its threshold), not the train split: XGBoost was trained on the train split, so its scores there are overconfident and a GNN fitted on them would lean on the score more than it should live. `--fit-split train` keeps the old behaviour for a comparison.
+- Each split is cut into 24-hour blocks, each its own graph, so per-account totals cover 24 hours as in the ring service's window, not a whole split.
+
+Weights are saved as `gnn.npz` (NumPy records byte order, so a laptop file loads on s390x) plus `gnn_meta.json`. The ring service loads them automatically when present and writes a `gnn_score` per ring; `--no-gnn` turns it off. `--gnn-threshold X` (or `GNN_THRESHOLD=X` for compose) holds back ring versions the GNN scores below X.
+
+The teammate's GNN in `services/gnn/` (on `main`, PR #6) is not used by the ring service. Its weights were trained with no XGBoost score on the transfers (a constant 0.5 stood in) and with training examples chosen by the labels, so live it would see a score it never learned to use. Its ring-level before/after evaluation and its drop-weak-rings idea are what this pipeline took from it (`--gnn-sweep` below, `--gnn-threshold` above).
 
 Train on the VM from the repo root inside the Jupyter container (a few minutes on CPU):
 
@@ -76,7 +82,16 @@ Train on the VM from the repo root inside the Jupyter container (a few minutes o
 python -m scripts.train_gnn --data /home/ibm-user/shared/data --models /home/ibm-user/shared/models
 ```
 
-It prints test precision, recall, F1 and PR-AUC for XGBoost, the GNN and their average on the same candidate transfers. Report those whichever way they come out. On a Mac set `KMP_DUPLICATE_LIB_OK=TRUE` (two OpenMP runtimes), and run the test suite as two processes: everything except the two PyTorch tests, then those two.
+It prints test precision, recall, F1 and PR-AUC for XGBoost, the GNN and their average on the same candidate transfers. Report those whichever way they come out.
+
+What the GNN adds at ring level, from one replay: run the ring service with no `GNN_THRESHOLD` (every ring is published with its `gnn_score`), then
+
+```bash
+python -m scripts.evaluate_rings --labels ~/shared/data/clean.csv --models ~/shared/models \
+    --patterns ~/shared/data/HI-Small_Patterns.txt --splits ~/shared/data/splits.json --redis --gnn-sweep
+```
+
+The sweep repeats the numbers keeping only rings at or above each GNN threshold (exactly what `--gnn-threshold` would publish). The "no GNN" row is the baseline. The pitch number is how many rings with no laundering disappear against how many caught attempts are lost. Pick the threshold there, set `GNN_THRESHOLD` in `.env` and restart the ring service. On a Mac set `KMP_DUPLICATE_LIB_OK=TRUE` (two OpenMP runtimes), and run the test suite as two processes: everything except the two PyTorch tests, then those two.
 
 `rings` message fields (the case writer and the page parse exactly these): `ring_id`, `version`, `shape`, `n_accounts`, `accounts` (JSON list), `edges` (JSON list of objects with `txn_id`, `from`, `to`, `amount_usd`, `ts`, `score`), `xgb_score`, `gnn_score`, `reasons` (JSON list), `first_seen`, `last_seen`. All values as text.
 
@@ -112,12 +127,12 @@ The six largest rings (20 to 30 accounts, scatter-gather and gather-scatter) are
 
 ### 6. Numbers for the pitch (Pair 1 collects)
 
-Test precision, recall, F1 and PR-AUC for XGBoost and the $10,000 baseline; GNN precision and recall on the same transfers; share of known laundering attempts caught by a ring and how often the shape name matches `HI-Small_Patterns.txt`; minutes from an attempt's first transfer to its ring appearing; share of money still stoppable after the alert; latency p50 and p99; Telum timing if available; Granite fact-check pass rate.
+Test precision, recall, F1 and PR-AUC for XGBoost and the $10,000 baseline; GNN precision and recall on the same transfers; the `--gnn-sweep` table (rings without laundering removed versus attempts lost); share of known laundering attempts caught by a ring and how often the shape name matches `HI-Small_Patterns.txt`; minutes from an attempt's first transfer to its ring appearing; share of money still stoppable after the alert; latency p50 and p99; Telum timing if available; Granite fact-check pass rate.
 
 ## Facts everyone needs
 
 - Split cutoffs: validation starts `2022-09-06T13:36:00`, test starts `2022-09-08T16:12:00`. Train 3,046,861 rows (2,297 laundering), validation 1,015,602 (1,082), test 1,015,882 (1,798).
-- Shared files on the VM: `~/shared/data/` for `clean.csv`, `splits.json`, `fx_rates.json`, `features.csv`; `~/shared/models/` for `scorer.json`, `feature_list.json`, `thresholds.json`, `gnn.pt`. Inside containers these are `/data/data/` and `/data/models/` (`common/paths.py`).
+- Shared files on the VM: `~/shared/data/` for `clean.csv`, `splits.json`, `fx_rates.json`, `features.csv`; `~/shared/models/` for `scorer.json`, `feature_list.json`, `thresholds.json`, `gnn.npz`, `gnn_meta.json`. Inside containers these are `/data/data/` and `/data/models/` (`common/paths.py`).
 - No parquet anywhere: the VM image has no pyarrow. Read `clean.csv` with `common.clean_transactions.read_clean_csv`, which restores column types.
 - Stream names and the Redis host come from `common/bus.py`; the `txns` message format from `common/streams.py`.
 - The raw CSV is 476 MB and the clean CSV 917 MB; both go to the VM by scp, not the Jupyter upload button (200 MB limit).

@@ -56,13 +56,13 @@ def test_forward_shapes_and_direction_matters():
 
 
 def test_training_learns_the_toy_signal_and_round_trips_through_npz(tmp_path):
-    graphs = {"train": toy_graph(600, seed=1), "validation": toy_graph(300, seed=2)}
+    graphs = {"fit": toy_graph(600, seed=1), "stop": toy_graph(300, seed=2)}
     model, val_ap = train(graphs, hidden=16, layers=2, epochs=60, lr=0.02, patience=60, seed=0)
-    base_rate = graphs["validation"]["y"].mean()
+    base_rate = graphs["stop"]["y"].mean()
     assert val_ap > 2 * base_rate                       # far better than chance on the toy signal
     test = toy_graph(300, seed=3)
     p = predict(model, test)
-    thr = best_f1_threshold(graphs["validation"]["y"], predict(model, graphs["validation"]))
+    thr = best_f1_threshold(graphs["stop"]["y"], predict(model, graphs["stop"]))
     assert 0 < thr < 1
 
     save_model(model, {"gnn_threshold": thr, "expand_threshold": 0.5}, tmp_path)
@@ -72,6 +72,37 @@ def test_training_learns_the_toy_signal_and_round_trips_through_npz(tmp_path):
     loaded, meta2 = load_model(tmp_path)
     assert np.allclose(predict(loaded, test), p, atol=1e-6)
     assert meta2["gnn_threshold"] == thr
+
+
+def split_rows():
+    """Transfers over 10 days: days 0-5 train, 6-7 validation, 8-9 test; account A pays B once a day."""
+    import pandas as pd
+    rows = []
+    for day in range(10):
+        split = "train" if day < 6 else "validation" if day < 8 else "test"
+        for k, (src, dst, y) in enumerate([("A", "B", 1), ("A", "C", 0), ("C", "D", 0)]):
+            rows.append({"txn_id": 10 * day + k, "split": split, "label": y, "amount_usd": 100.0,
+                         "ts_min": day * 1440 + 60 * k, "from_acct": src, "to_acct": dst,
+                         **{name: 0.0 for name in FEATURE_NAMES}})
+    return pd.DataFrame(rows)
+
+
+def test_graphs_fit_on_validation_and_cut_into_24_hour_blocks():
+    from scripts.train_gnn import make_graphs
+    rows = split_rows()
+    scores = np.full(len(rows), 0.9)
+    scores[rows.from_acct.eq("C").to_numpy()] = 0.1          # below expand: not a candidate
+    g = make_graphs(rows, scores, expand=0.5, fit_split="validation", stop_share=0.25)
+    # validation is days 6 and 7: the first 75 % of its time span is fitted, the rest held out
+    assert sorted(g["fit"]["txn_id"].tolist()) == [60, 61] and sorted(g["stop"]["txn_id"].tolist()) == [70, 71]
+    assert sorted(g["test"]["txn_id"].tolist()) == [80, 81, 90, 91]
+    # one node per account per day: A on day 8 and A on day 9 are different nodes
+    assert sorted(g["test"]["accounts"]) == ["8|A", "8|B", "8|C", "9|A", "9|B", "9|C"]
+    node_a = dict(zip(NODE_FEATURES, g["test"]["x_node"][g["test"]["accounts"].index("8|A")]))
+    assert node_a["log_out_count"] == pytest.approx(np.log1p(2))   # its day's two transfers, not four
+
+    g = make_graphs(rows, scores, expand=0.5, fit_split="train")
+    assert len(g["fit"]["y"]) == 12 and len(g["stop"]["y"]) == 4
 
 
 def test_load_model_without_files_returns_none(tmp_path):

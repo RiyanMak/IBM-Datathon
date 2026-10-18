@@ -1,4 +1,4 @@
-# Step 4: Ring service (grouping; the GNN comes later)
+# Step 4: Ring service (grouping and the GNN second opinion)
 
 **Reads:** Redis stream `scored` (from the scorer) and `models/thresholds.json` · **Writes:** Redis stream `rings` (to the case writer and the page) and the `stats:rings` hash
 
@@ -36,11 +36,19 @@ n_accounts   "8"
 accounts     ["10_8000EBD30", ...]                       sorted
 edges        [{"txn_id","from","to","amount_usd","ts","score"}, ...]   in time order
 xgb_score    "0.9312"                                     mean score of the ring's transfers
-gnn_score    ""                                           empty until the GNN exists
+gnn_score    "0.8731"                                     the GNN's mean probability over the ring's transfers; "" without a GNN
 reasons      ["money left within a minute of arriving", ...]   the 3 most frequent phrases
 first_seen   "2022-09-08T14:00:00"                        data time
 last_seen    "2022-09-08T18:44:00"
 ```
+
+`published_at` (data time of the regroup that published the version) is also sent, for the evaluation.
+
+## The GNN second opinion
+
+When `models/gnn.npz` and `gnn_meta.json` exist (written by `python -m scripts.train_gnn`), the service loads the model from `common/gnn.py` at start-up. For each ring version it builds the graph of the ring's transfers plus every window transfer touching a ring account, and `gnn_score` is the GNN's mean laundering probability over the ring's own transfers. Without the files, without PyTorch, or with `--no-gnn`, `gnn_score` stays empty and grouping is unchanged.
+
+`--gnn-threshold X` (or `GNN_THRESHOLD=X`) holds back ring versions scored below X. The ring keeps growing in memory and is published, with the next version number, once a later version clears the bar. A ring with an empty `gnn_score` (no clues on its messages) is never held back. Choose X with `python -m scripts.evaluate_rings ... --gnn-sweep` on a replay published with no threshold; `stats:rings` counts the held-back versions as `gnn_dropped`.
 
 ## Try it on a laptop
 
@@ -62,6 +70,8 @@ REDIS_HOST=localhost .venv/bin/python -m services.rings.main --models path/to/mo
 | `--regroup-minutes M` | 10 | Regroup every M data minutes |
 | `--hub-limit N` | 300 | Leave out accounts with more counterparties than N |
 | `--min-size`, `--max-size` | 3, 50 | Ring sizes |
+| `--no-gnn` | off | Do not load the GNN even if `gnn.npz` exists |
+| `--gnn-threshold X` | `$GNN_THRESHOLD`, or none | Hold back ring versions the GNN scores below X |
 | `--consumer NAME` | `$RINGS_NAME` or host name | Name in the consumer group `rings` |
 | `--once` | off | Group what is on the stream, then exit |
 | `--max-messages N` | all | Stop after N messages |

@@ -378,6 +378,35 @@ def test_gnn_second_opinion_when_a_model_is_present(tmp_path):
     assert service.gnn is None and [f for _, f in r3.xrange(bus.RINGS, "-", "+")][0]["gnn_score"] == ""
 
 
+def test_gnn_threshold_holds_back_weak_rings_until_a_version_clears_it():
+    service = RingService(0.5, gnn=object(), gnn_threshold=0.6)
+    gnn_scores = iter(["0.2000", "0.9000"])
+    service.gnn_score = lambda ring: next(gnn_scores)      # stands in for the model
+
+    for i, spec in enumerate([("A", "B"), ("B", "C"), ("C", "A")]):
+        service.offer(scored(spec[0], spec[1], 0.8, i))
+    assert service.regroup() == []                           # the GNN says 0.2: held back
+    assert service.stats["gnn_dropped"] == 1 and service.stats["published"] == 0
+    assert list(service.rings.values())[0].version == 0      # no version number was used up
+
+    published = service.offer(scored("A", "D", 0.8, 20))     # 10 data minutes on: regroups; the GNN says 0.9
+    assert len(published) == 1 and published[0]["version"] == "1" and published[0]["gnn_score"] == "0.9000"
+    assert published[0]["n_accounts"] == "4"                 # the version carries everything absorbed so far
+
+    # no threshold, or an empty score (no clues to judge by): never held back
+    assert not RingService(0.5, gnn=object()).gnn_dropped("0.0100")
+    assert not RingService(0.5, gnn=object(), gnn_threshold=0.6).gnn_dropped("")
+
+
+def test_gnn_threshold_comes_from_the_environment(monkeypatch):
+    from services.rings.rings import build_parser
+    monkeypatch.setenv("GNN_THRESHOLD", "")                  # compose passes empty when unset
+    assert build_parser().parse_args([]).gnn_threshold is None
+    monkeypatch.setenv("GNN_THRESHOLD", "0.4")
+    assert build_parser().parse_args([]).gnn_threshold == 0.4
+    assert build_parser().parse_args(["--gnn-threshold", "0.7"]).gnn_threshold == 0.7
+
+
 def test_main_with_fake_redis_and_a_thresholds_file(tmp_path):
     r = fake_redis()
     (tmp_path / "thresholds.json").write_text(json.dumps({"alert": 0.9, "ring": 0.5}))

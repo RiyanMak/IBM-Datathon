@@ -25,8 +25,11 @@ Grouping, as in the team guide:
      that ring_id and bumps the version; otherwise it is a new ring
   6. publish a ring when it is new or its accounts or transfers changed
 
-The GNN second opinion is a later addition: gnn_score is sent empty until it
-exists, and the page and the case writer both handle that.
+The GNN second opinion (common/gnn.py, trained by scripts/train_gnn.py) is loaded
+when models/gnn.npz exists and fills gnn_score; without it gnn_score is sent
+empty, and the page and the case writer both handle that. With --gnn-threshold
+(or $GNN_THRESHOLD) a ring version whose gnn_score is below it is not published;
+the ring keeps growing and is published once a later version clears the bar.
 """
 
 import argparse
@@ -444,9 +447,11 @@ class RingService:
 
     def __init__(self, threshold, window_minutes=WINDOW_MINUTES, regroup_minutes=REGROUP_MINUTES,
                  hub_limit=HUB_LIMIT, min_size=MIN_SIZE, max_size=MAX_SIZE, new_id=None,
-                 expand_threshold=EXPAND_THRESHOLD, gnn=None):
+                 expand_threshold=EXPAND_THRESHOLD, gnn=None, gnn_threshold=None):
         self.threshold = float(threshold)
         self.gnn = gnn                  # a loaded common.gnn model, or None: then gnn_score stays empty
+        # rings the GNN scores below this are held back; None publishes every ring
+        self.gnn_threshold = None if gnn_threshold is None else float(gnn_threshold)
         # a member's transfers at or above this score join its ring (never above the ring threshold)
         self.expand_threshold = min(float(expand_threshold), self.threshold)
         self.window = Window(window_minutes)
@@ -517,6 +522,10 @@ class RingService:
                 fields = ring_fields(ring, ring.edges.values(), self.data_time())
                 if self.gnn is not None:
                     fields["gnn_score"] = self.gnn_score(ring)
+                    if self.gnn_dropped(fields["gnn_score"]):
+                        ring.version -= 1     # not published: the next published version gets this number
+                        self.stats["gnn_dropped"] += 1
+                        continue
                 published.append(fields)
                 self.stats["published"] += 1
 
@@ -544,6 +553,11 @@ class RingService:
         probabilities = predict(self.gnn, graph)
         self.stats["gnn_scored"] += 1
         return "%.4f" % float(probabilities[:len(own)].mean())
+
+    def gnn_dropped(self, gnn_score: str) -> bool:
+        """True if the GNN scored the ring below the threshold. An empty score (no clues to
+        judge by) is never dropped: the GNN holds rings back only when it has an opinion."""
+        return self.gnn_threshold is not None and gnn_score != "" and float(gnn_score) < self.gnn_threshold
 
     def data_time(self) -> str:
         if self.now_min is None:
@@ -582,6 +596,7 @@ def publish(r, service, rings, msg_ids, stream, out_stream, maxlen, consumer):
         "seen": str(s["seen"]), "kept_in_window": str(len(service.window)),
         "rings": str(len(service.rings)), "published": str(s["published"]),
         "regroups": str(s["regroups"]), "hubs": str(s["hubs"]), "skipped": str(s["skipped"]),
+        "gnn_dropped": str(s["gnn_dropped"]),
         "data_time": service.data_time(), "consumer": consumer,
     })
     if msg_ids:
@@ -645,6 +660,12 @@ def run(r, service, consumer, stream=bus.SCORED, out_stream=bus.RINGS, batch=BAT
 
 # ---------------------------------------------------------------- command line
 
+def _env_float(name):
+    """A float from the environment, or None when it is unset or empty (compose passes empty)."""
+    raw = os.environ.get(name, "").strip()
+    return float(raw) if raw else None
+
+
 def build_parser():
     p = argparse.ArgumentParser(description="Mule Ring Hunter ring service: scored -> rings")
     p.add_argument("--models", default=os.environ.get("MODELS_PATH", str(MODELS_DIR)),
@@ -669,6 +690,9 @@ def build_parser():
     p.add_argument("--stream", default=bus.SCORED, help="input stream (default: %(default)s)")
     p.add_argument("--out-stream", default=bus.RINGS, help="output stream (default: %(default)s)")
     p.add_argument("--no-gnn", action="store_true", help="do not load the GNN even if models/gnn.npz exists")
+    p.add_argument("--gnn-threshold", type=float, default=_env_float("GNN_THRESHOLD"),
+                   help="hold back ring versions the GNN scores below this (default: $GNN_THRESHOLD, "
+                        "or publish every ring; pick it with scripts/evaluate_rings.py --gnn-sweep)")
     p.add_argument("--once", action="store_true", help="group what is on the stream now, then exit")
     p.add_argument("--max-messages", type=int, help="stop after handling this many messages")
     return p
@@ -697,11 +721,14 @@ def main(argv=None, r=None):
     r = r or bus.connect()
     service = RingService(threshold, int(args.window_hours * 60), args.regroup_minutes, args.hub_limit,
                           args.min_size, args.max_size, new_id=lambda: "R-%04d" % r.incr(ID_KEY),
-                          expand_threshold=args.expand_threshold, gnn=gnn)
+                          expand_threshold=args.expand_threshold, gnn=gnn, gnn_threshold=args.gnn_threshold)
     log("grouping '%s' -> '%s' as consumer '%s': ring threshold %.4f, expand threshold %.4f, window %gh, "
         "regroup every %d min, hubs > %d counterparties, rings of %d..%d accounts"
         % (args.stream, args.out_stream, args.consumer, threshold, service.expand_threshold,
            args.window_hours, args.regroup_minutes, args.hub_limit, args.min_size, args.max_size))
+    if args.gnn_threshold is not None:
+        log("GNN threshold %.4f: %s" % (args.gnn_threshold, "rings below it are held back" if gnn is not None
+                                        else "ignored, no GNN loaded"))
 
     stop = threading.Event()
     old_handlers = {}
@@ -719,9 +746,9 @@ def main(argv=None, r=None):
     finally:
         for sig, handler in old_handlers.items():
             signal.signal(sig, handler)
-    log("done: seen %d | kept %d | rings %d | published %d | regroups %d | skipped %d"
-        % (stats["seen"], stats["kept"], len(service.rings), stats["published"], stats["regroups"],
-           stats["skipped"]))
+    log("done: seen %d | kept %d | rings %d | published %d | held back by the GNN %d | regroups %d | skipped %d"
+        % (stats["seen"], stats["kept"], len(service.rings), stats["published"], stats["gnn_dropped"],
+           stats["regroups"], stats["skipped"]))
     return service
 
 

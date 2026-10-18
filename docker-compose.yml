@@ -58,6 +58,10 @@ services:
     build: .
     # run exactly one: the 24 h window and the ring ids live in its memory
     command: python -m services.rings.main
+    # empty: publish every ring with its gnn_score. A number: hold back rings the GNN
+    # scores below it (pick it with scripts/evaluate_rings.py --gnn-sweep)
+    environment:
+      - GNN_THRESHOLD=${GNN_THRESHOLD:-}
     volumes:
       - ~/shared:/data
     depends_on:

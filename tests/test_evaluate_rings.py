@@ -103,6 +103,36 @@ def test_label_summary_scores_rings_against_clean_csv_labels(tmp_path):
     assert "| Rings (latest versions) | 2 |" in label_report(s)
 
 
+def test_gnn_sweep_keeps_only_what_the_threshold_would_publish(tmp_path):
+    from scripts.evaluate_rings import gnn_sweep, sweep_report
+    path = tmp_path / "patterns.txt"
+    path.write_text(PATTERNS)
+    attempts = load_attempts(path, {"Euro": 1.1})
+    clean = tmp_path / "clean.csv"
+    clean.write_text("txn_id,ts,label,split\n1,2022-09-09T10:00:00,1,test\n2,2022-09-09T10:15:00,1,test\n"
+                     "8,2022-09-09T23:00:00,0,test\n9,2022-09-09T23:05:00,0,test\n")
+    from scripts.evaluate_rings import load_labels
+    labels = load_labels(clean)
+
+    caught = ring("R-0001", 1, "fan-out", ["10_M0000001", "27_P0000001", "27_P0000002", "27_P0000003"], "2022-09-09T10:40:00")
+    caught["gnn_score"], caught["edges"] = "0.8000", json.dumps([{"txn_id": "1"}, {"txn_id": "2"}])
+    false_alarm = ring("R-0003", 1, "fan-in", ["70_Y1", "70_Y2", "70_Y3"], "2022-09-09T23:00:00")
+    false_alarm["gnn_score"], false_alarm["edges"] = "0.2000", json.dumps([{"txn_id": "8"}, {"txn_id": "9"}])
+    unscored = ring("R-0004", 1, "other", ["70_Z1", "70_Z2", "70_Z3"], "2022-09-09T23:30:00")   # gnn_score ""
+
+    rows = gnn_sweep([caught, false_alarm, unscored], [0.5, 0.9], attempts, datetime(2022, 9, 8, 16, 12), None, labels)
+    base, half, high = rows
+    assert base["gnn_threshold"] is None and base["rings"] == 3 and base["attempts_caught"] == 1
+    assert base["rings_without_laundering"] == 2 and base["ring_transfer_precision"] == 0.5
+    # at 0.5 the false alarm is gone; the unscored ring is never held back
+    assert half["rings"] == 2 and half["attempts_caught"] == 1 and half["rings_without_laundering"] == 1
+    assert half["ring_transfer_precision"] == 1.0 and half["rings_matching_an_attempt"] == 1
+    # at 0.9 the GNN also drops the real ring: the cost shows up as a missed attempt
+    assert high["rings"] == 1 and high["attempts_caught"] == 0
+    text = sweep_report(rows)
+    assert "| no GNN | 3 |" in text and "| 0.50 | 2 |" in text
+
+
 def test_rings_file_and_missing_published_at_fall_back_to_last_seen(tmp_path):
     m = ring("R-0009", 1, "cycle", ["5_C1", "6_C2", "7_C3"], "2022-09-09T22:30:00")
     del m["published_at"]
