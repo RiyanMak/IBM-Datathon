@@ -72,13 +72,14 @@ services:
   casewriter:
     build: .
     command: python -m services.casewriter.main
-    # watsonx credentials from .env when present. Without them the case writer runs
-    # Granite locally through llama.cpp if the base image's GGUF is found (or set
-    # GRANITE_GGUF), on GRANITE_THREADS cores; with neither it uses the template only.
+    # watsonx credentials from .env when present (Granite over HTTPS, fact-checked).
+    # Without them: the template. GRANITE_LOCAL=1 runs the base image's Granite through
+    # llama.cpp instead; measured at about 90 s per ring on one core, so demo-only.
     env_file:
       - path: .env
         required: false
     environment:
+      - GRANITE_LOCAL=${GRANITE_LOCAL:-0}
       - GRANITE_GGUF=${GRANITE_GGUF:-}
       - GRANITE_THREADS=${GRANITE_THREADS:-1}
     volumes:

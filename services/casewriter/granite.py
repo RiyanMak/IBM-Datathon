@@ -80,6 +80,11 @@ def local_model_path():
 
 
 def local_configured():
+    """Opt-in: GRANITE_LOCAL=1 (or an explicit GRANITE_GGUF). Measured on the VM, the packaged
+    350M base model takes about 90 s per ring on one core and rarely closes its JSON, so it
+    stays off unless asked for; watsonx is the production path."""
+    if os.environ.get("GRANITE_LOCAL", "") not in ("1", "true", "yes") and not os.environ.get(LOCAL_GGUF_ENV):
+        return False
     if not local_model_path():
         return False
     try:
