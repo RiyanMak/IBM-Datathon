@@ -301,20 +301,26 @@ class SlackAdapter(Adapter):
         return client
 
     def _call(self, what, fn, **kwargs):
-        """Run one Web API call, turning Slack's error into AdapterError."""
+        """Run one Web API call, turning any failure into AdapterError.
+
+        A Slack API error (bad token, unknown channel, 429 after the retries) carries
+        Slack's error code. A network failure (Slack unreachable, DNS, timeout) comes
+        from urllib as URLError or OSError, not as SlackApiError; it must become an
+        AdapterError too, or the notifier would acknowledge the case as malformed and
+        never post it. Only AdapterError means "leave it pending and retry".
+        """
         try:
             return fn(**kwargs)
         except AdapterError:
             raise
         except Exception as e:
-            if type(e).__name__ != "SlackApiError" and not _is_slack_error(e):
-                raise
             code = ""
-            resp = getattr(e, "response", None)
-            try:
-                code = resp.get("error", "") if resp is not None else ""
-            except Exception:
-                pass
+            if type(e).__name__ == "SlackApiError" or _is_slack_error(e):
+                resp = getattr(e, "response", None)
+                try:
+                    code = resp.get("error", "") if resp is not None else ""
+                except Exception:
+                    pass
             raise AdapterError("Slack %s failed: %s" % (what, code or type(e).__name__)) from e
 
     # ---- outbound

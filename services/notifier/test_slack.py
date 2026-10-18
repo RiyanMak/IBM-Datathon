@@ -426,3 +426,22 @@ def test_module_imports_without_slack_libraries():
     out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert "ok" in out.stdout
+
+
+def test_network_error_becomes_adapter_error():
+    """Slack unreachable: urllib raises URLError, not SlackApiError. It must still be an
+    AdapterError, so the notifier leaves the case pending instead of acknowledging it."""
+    from urllib.error import URLError
+
+    class Down:
+        def chat_postMessage(self, **kwargs):
+            raise URLError("connection refused")
+
+        def chat_update(self, **kwargs):
+            raise OSError("network is unreachable")
+
+    a = SlackAdapter(bot_token="xoxb-x", app_token="xapp-x", channel="C1", client=Down())
+    with pytest.raises(AdapterError, match="URLError"):
+        a.post(make_card())
+    with pytest.raises(AdapterError, match="OSError"):
+        a.update("C1:1.0", make_card())
