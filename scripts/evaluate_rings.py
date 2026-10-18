@@ -440,15 +440,15 @@ def report(summary) -> str:
         "| Shape name matches at the first alert, among caught | %d (%s) |" % (s["shape_matched"], pct(s["shape_match_share"])),
         "| Shape name matches in the ring's latest version | %d (%s) |" % (s["shape_matched_final"], pct(s["shape_match_final_share"])),
         "| Minutes from first transfer to alert, median / mean / 90th percentile | %s / %s / %s |" % (
-            num(s["minutes_to_alert_median"]), num(s["minutes_to_alert_mean"]), num(s["minutes_to_alert_p90"])),
+            num(s["minutes_to_alert_median"]), num(s["minutes_to_alert_mean"]), num(s.get("minutes_to_alert_p90"))),
         "| Money still stoppable at the alert, median / mean | %s / %s |" % (
             pct(s["still_stoppable_median"]), pct(s["still_stoppable_mean"])),
         "| Money still stoppable, total over caught attempts | %s of %s |" % (
-            usd(s["still_stoppable_usd"]), usd(s["caught_attempts_usd"])),
+            usd(s.get("still_stoppable_usd")), usd(s.get("caught_attempts_usd"))),
         "| Rings published (distinct ids) | %d |" % s["rings_total"],
         "| Rings matching a known attempt | %d |" % s["rings_matching_an_attempt"],
-        "| Attempts that started before the period (reported apart), caught | %d, %d |" % (
-            s["started_earlier"]["attempts"], s["started_earlier"]["caught"]),
+        "| Attempts that started before the period (reported apart), caught | %s, %s |" % (
+            (s.get("started_earlier") or {}).get("attempts", 0), (s.get("started_earlier") or {}).get("caught", 0)),
         "", "| Shape | Attempts | Caught | Shape matched at alert | Shape matched, latest |", "|---|---|---|---|---|",
     ]
     for shape, v in s["per_shape"].items():
@@ -461,30 +461,43 @@ def usd(x):
     return "-" if x is None else "$%s" % format(round(x), ",")
 
 
-def markdown_report(summary, since=None, until=None, source="", rates_known=True) -> str:
-    """The evaluation as a Markdown page for the repo: the replay window, the denominators,
-    every number with its definition, the per-shape table, the best and worst alerts, and
-    the limitations a reader must know before quoting a number."""
+def markdown_report(summary, params=None) -> str:
+    """The evaluation as a Markdown page for the repo or the pitch: the run parameters, the
+    headline numbers, every table the script prints, the fastest and slowest alerts, and the
+    limitations a reader must know before quoting a number.
+
+    summary: the dict main() returns (keys "attempts", "labels", "gnn_sweep", each optional).
+    params: the run parameters to list under the title (name -> value; empty ones are left out).
+    """
+    lines = ["# Ring-level evaluation", ""]
+    params = {k: v for k, v in (params or {}).items() if v not in (None, "", False)}
+    if params:
+        lines += ["## Run parameters", "", "| Parameter | Value |", "|---|---|"]
+        lines += ["| %s | `%s` |" % (k, v) for k, v in params.items()]
+        lines.append("")
     s = summary.get("attempts")
-    lines = ["# Ring evaluation", ""]
-    lines.append("Rings read from %s. Attempts counted from %s%s." % (
-        source or "the rings stream", since.strftime(ISO) if since else "the beginning of the data",
-        (" to " + until.strftime(ISO)) if until else ""))
-    lines.append("")
     if s:
-        lines += [
-            "## Known laundering attempts", "",
-            "An attempt is caught when at least half of some ring's accounts belong to it (the first ring version "
-            "that does so sets the alert time). The headline denominator is the %d attempts whose first transfer "
-            "lies in the replayed period; the %d attempts that started earlier and were still running are "
-            "reported on their own line because the replay only showed their tail." % (
-                s["attempts_in_period"], s["started_earlier"]["attempts"]),
-            "", report(s), "",
-        ]
-        if s["alerts_before_first_transfer"]:
+        earlier = s.get("started_earlier") or {}
+        lines += ["## Headline numbers", "", "| Measure | Value |", "|---|---|",
+                  "| Known attempts starting in the period | %d |" % s["attempts_in_period"],
+                  "| Caught by a ring | %d (%s) |" % (s["caught"], pct(s["caught_share"])),
+                  "| Covered (half the attempt's accounts in one ring) | %d |" % s["covered"],
+                  "| Shape match rate at the first alert, among caught | %s |" % pct(s["shape_match_share"]),
+                  "| Median minutes from first transfer to alert | %s |" % num(s["minutes_to_alert_median"]),
+                  "| 90th percentile minutes to alert | %s |" % num(s.get("minutes_to_alert_p90")),
+                  "| Median share of the money still stoppable at the alert | %s |" % pct(s["still_stoppable_median"]),
+                  "| Attempts that started before the period (reported apart), caught | %s, %s |" % (
+                      earlier.get("attempts", 0), earlier.get("caught", 0)),
+                  "", "## Against the known attempts (HI-Small_Patterns.txt)", "",
+                  "An attempt is caught when at least half of some ring's accounts belong to it; the first ring "
+                  "version that does so sets the alert time. The headline denominator is the attempts whose first "
+                  "transfer lies in the replayed period. Attempts that started earlier and were still running are "
+                  "reported on their own line, because the replay only showed their tail.",
+                  "", report(s), ""]
+        if s.get("alerts_before_first_transfer"):
             lines += ["%d alert(s) came before the attempt's first transfer (the ring formed from other activity "
                       "of the same accounts); those count as 0 minutes." % s["alerts_before_first_transfer"], ""]
-        ranked = sorted((c for c in s["caught_attempts"] if c["minutes_to_alert"] is not None),
+        ranked = sorted((c for c in s.get("caught_attempts", []) if c.get("minutes_to_alert") is not None),
                         key=lambda c: c["minutes_to_alert"])
         if ranked:
             lines += ["### Fastest and slowest alerts", "",
@@ -492,13 +505,17 @@ def markdown_report(summary, since=None, until=None, source="", rates_known=True
             picks = ranked[:5] + ([None] if len(ranked) > 10 else []) + ranked[max(5, len(ranked) - 5):]
             for c in picks:
                 lines.append("| … | | | | |" if c is None else "| %s | %s | %s | %s | %s |" % (
-                    c["attempt"], c["shape"], c["ring"], num(c["minutes_to_alert"]), pct(c["stoppable_share"])))
+                    c["attempt"], c["shape"], c["ring"], num(c["minutes_to_alert"]), pct(c.get("stoppable_share"))))
             lines.append("")
-    lab = summary.get("labels")
-    if lab:
-        lines += ["## Against the transfer labels", "", label_report(lab), ""]
+    if summary.get("labels"):
+        lines += ["## Against the transfer labels (clean.csv)", "", label_report(summary["labels"]), ""]
     if summary.get("gnn_sweep"):
-        lines += ["## What the GNN threshold would change", "", sweep_report(summary["gnn_sweep"]), ""]
+        lines += ["## GNN sweep", "",
+                  "Each row keeps only the ring versions whose gnn_score is at or above the threshold; "
+                  "\"no GNN\" is the baseline.", "", sweep_report(summary["gnn_sweep"]), ""]
+    if not any(summary.get(k) for k in ("attempts", "labels", "gnn_sweep")):
+        lines += ["No results: give --patterns and/or --labels.", ""]
+        return "\n".join(lines)
     lines += [
         "## Limitations", "",
         "- The patterns file is an incomplete answer key: it names 3,209 of the 5,177 laundering transfers, so a "
@@ -508,7 +525,7 @@ def markdown_report(summary, since=None, until=None, source="", rates_known=True
         "- The alert time is the first ring version that caught the attempt, when a person could first have "
         "acted; later versions may add accounts and change the shape name (both columns are reported).",
     ]
-    if not rates_known:
+    if params.get("patterns") and not params.get("rates"):
         lines.append("- No exchange-rate file was given: attempts paid in other currencies have no money numbers.")
     return "\n".join(lines) + "\n"
 
@@ -531,7 +548,8 @@ def main(argv=None):
     src.add_argument("--rings-file", help="JSON lines, one rings message per line")
     p.add_argument("--stream", default="rings")
     p.add_argument("--out", help="write the summary as JSON here")
-    p.add_argument("--report", help="write the summary as a Markdown page here (e.g. data/evaluation/evaluation.md)")
+    p.add_argument("--markdown", "--report", dest="markdown",
+                   help="also write the summary as a Markdown page here (e.g. data/evaluation/evaluation.md)")
     p.add_argument("--gnn-sweep", nargs="?", const=",".join("%g" % t for t in GNN_SWEEP),
                    help="repeat the numbers keeping only rings with gnn_score at or above each of these "
                         "comma-separated thresholds (default when given alone: %(const)s)")
@@ -596,10 +614,14 @@ def main(argv=None):
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(summary, fh, indent=1, default=str)
-    if args.report:
-        with open(args.report, "w") as fh:
-            fh.write(markdown_report(summary, since, until, summary["meta"]["rings_source"],
-                                     rates_known=bool(args.rates) or not args.patterns))
+    if args.markdown:
+        params = {"patterns": args.patterns, "labels": args.labels, "models": args.models, "rates": args.rates,
+                  "splits": args.splits, "since": since.strftime(ISO) if since else None,
+                  "until": until.strftime(ISO) if until else None,
+                  "rings from": summary["meta"]["rings_source"], "ring versions read": len(raw),
+                  "gnn sweep": ",".join("%g" % t for t in sweep) if sweep is not None else None}
+        with open(args.markdown, "w") as fh:
+            fh.write(markdown_report(summary, params))
     return summary
 
 

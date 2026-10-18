@@ -1,77 +1,69 @@
-"""Write a decision made through the notifier to the `decisions` stream, and read
-decisions back.
+"""Writes and reads investigator decisions on the `decisions` stream, for the notifier.
 
-The first five fields are exactly what services/page/decisions.py writes (same
-names, same formats), so the page shows a decision made here with no change on its
-side. Two extras say who decided and where:
+The page writes decisions too (services/page/decisions.py). To keep one audit trail
+the notifier writes the page's five fields with the page's own function, so the
+formats can never drift:
 
-    decided_by   "console:aryan" (a chat adapter would write e.g. "slack:U0123ABC:jane.doe")
-    channel      "console" today; "slack", "teams" and "page" are reserved in the contract
+    ring_id, version, decision (freeze | dismiss | more_info), note (<= 1000 chars),
+    decided_at (UTC ISO with milliseconds, e.g. 2026-10-18T14:02:11.123+00:00)
 
-Readers that know only the guide's four fields ignore the extras.
+and adds two fields the page does not write:
+
+    decided_by   who clicked: "slack:U0123ABC:jane.doe" or "console:aryan"
+    channel      where they clicked: "slack" | "teams" | "console" | "page"
+
+Readers that know only the page's fields ignore the extras, the same rule the page
+already follows for `version`.
+
+Reading: the latest decision per ring is the newest message for that ring in stream
+order (XREVRANGE, bounded), exactly what the page's state.py does, so the card and
+the dashboard badge always agree.
 """
-from datetime import datetime, timezone
-
 from common import bus
+from services.page import decisions as page_decisions
+from services.page.decisions import DecisionError  # noqa: F401  (re-exported for callers)
 
-DECISIONS = ("freeze", "dismiss", "more_info")
 CHANNELS = ("slack", "teams", "console", "page")
-MAX_NOTE = 1000
-WINDOW = 500   # same window as the page's state.read_decisions
+WINDOW = 500
 
 
-class DecisionError(ValueError):
-    pass
-
-
-def build(ring_id, version, decision, note="", decided_by="", channel="console", now=None):
-    """The message to send, all values as text. Raises DecisionError on bad input."""
-    ring_id = (ring_id or "").strip()
-    decision = (decision or "").strip().lower()
-    if not ring_id:
-        raise DecisionError("no ring given")
-    if decision not in DECISIONS:
-        raise DecisionError("decision must be one of %s, not %r" % (", ".join(DECISIONS), decision))
+def build(ring_id, version, decision, note, decided_by, channel, now=None):
+    """The message to send, all values text. Raises DecisionError on bad input."""
+    channel = (channel or "").strip().lower()
     if channel not in CHANNELS:
         raise DecisionError("channel must be one of %s, not %r" % (", ".join(CHANNELS), channel))
-    note = (note or "").strip()
-    if len(note) > MAX_NOTE:
-        raise DecisionError("note is %d characters; the limit is %d" % (len(note), MAX_NOTE))
+    decided_by = (decided_by or "").strip()
+    if not decided_by:
+        raise DecisionError("decided_by is empty")
+    if version == "":
+        version = None
     try:
-        version = str(int(version)) if version not in (None, "") else ""
-    except (TypeError, ValueError):
+        msg = page_decisions.build(ring_id, version, decision, note, now=now)
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, DecisionError):
+            raise
         raise DecisionError("version must be a whole number, not %r" % (version,))
-    now = now or datetime.now(timezone.utc)
-    return {
-        "ring_id": ring_id,
-        "version": version,
-        "decision": decision,
-        "note": note,
-        "decided_at": now.isoformat(timespec="milliseconds"),
-        "decided_by": (decided_by or "").strip()[:200],
-        "channel": channel,
-    }
+    msg["decided_by"] = decided_by[:200]
+    msg["channel"] = channel
+    return msg
 
 
-def write(r, ring_id, version, decision, note="", decided_by="", channel="console", now=None):
-    """Append one decision; returns the message fields that were written."""
-    fields = build(ring_id, version, decision, note, decided_by, channel, now)
-    r.xadd(bus.DECISIONS, fields)
-    return fields
+def write(r, ring_id, version, decision, note, decided_by, channel, now=None):
+    """Append one decision. Returns the Redis message ID."""
+    return r.xadd(bus.DECISIONS, build(ring_id, version, decision, note, decided_by, channel, now))
 
 
 def latest(r, count=WINDOW):
-    """{ring_id: newest decision} from the last `count` decisions, like the page."""
+    """ring_id -> the newest decision dict for that ring (by stream order)."""
     out = {}
-    for _msg_id, fields in r.xrevrange(bus.DECISIONS, "+", "-", count=count):
-        ring_id = (fields.get("ring_id") or "").strip()
+    for _msg_id, f in r.xrevrange(bus.DECISIONS, "+", "-", count=count):
+        ring_id = (f or {}).get("ring_id")
         if ring_id:
-            out.setdefault(ring_id, fields)
+            out.setdefault(ring_id, dict(f))
     return out
 
 
-def history(r, ring_id):
-    """Every decision for one ring, oldest first (for the case packet's log).
-    Decisions arrive at human speed, so reading the whole stream is cheap."""
-    return [f for _msg_id, f in r.xrange(bus.DECISIONS, "-", "+")
-            if (f.get("ring_id") or "").strip() == ring_id]
+def history(r, ring_id, count=WINDOW):
+    """Every decision for one ring, oldest first."""
+    rows = r.xrevrange(bus.DECISIONS, "+", "-", count=count)
+    return [dict(f) for _msg_id, f in reversed(rows) if (f or {}).get("ring_id") == ring_id]

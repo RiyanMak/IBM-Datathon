@@ -1,7 +1,7 @@
 # Services reach Redis at host name "redis". ~/shared on the VM is /data inside,
 # so data files are in /data/data and models in /data/models (common/paths.py).
 #
-#   docker compose up -d --build                      build and start Redis, scorer, rings, case writer, notifier, page
+#   docker compose up -d --build                      build and start Redis, scorer, rings, case writer, page, notifier
 #   docker compose logs -f scorer                     wait for "scoring 'txns' -> 'scored'" (warm-up takes a few minutes)
 #   docker compose --profile replay up -d replayer    then start the replay
 #   docker compose --profile replay ps                what's running (screenshot this)
@@ -91,9 +91,10 @@ services:
 
   notifier:
     build: .
-    # Reviewer bot: turns each case into a card with Freeze / Dismiss / Needs more info
-    # and writes the same `decisions` message the page writes. Console mode prints the
-    # cards to the log; chat adapters are future work. No ports.
+    # Reviewer bot: posts each case to Slack (or prints it, console mode) with Freeze /
+    # Dismiss / Needs more info buttons; a click is written to the decisions stream.
+    # Slack runs in Socket Mode (an outbound websocket), so no port is published.
+    # Tokens come from .env; without them use NOTIFIER_ADAPTER=console.
     command: python -m services.notifier.main
     env_file:
       - path: .env
@@ -103,7 +104,7 @@ services:
       - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:8501}
       - SUPPRESS_HOURS=${SUPPRESS_HOURS:-24}
     volumes:
-      - ~/shared:/data
+      - ~/shared:/data   # cleaning_manifest.json for the input hash in case packets
     depends_on:
       redis:
         condition: service_healthy

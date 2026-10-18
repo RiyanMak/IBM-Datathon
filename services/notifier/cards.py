@@ -1,18 +1,26 @@
-"""A `cases` message -> a neutral "card" (a plain dict). No chat-product code here.
+"""Turns one `cases` message into a neutral "card": a plain dict any chat adapter can draw.
 
-The card says what to show; each adapter decides how to draw it. Every json.loads
-and number conversion is guarded, so a half-broken case still gives a card, and only
-a case with no ring id or no readable summary counts as malformed.
+    from services.notifier import cards
+    card = cards.build(case_fields, ring_fields, status, markers, dashboard_url)
 
-The label dicts are copied from services/page/models.py on purpose (the plan keeps
-services from importing each other); keep the wording in step with the page.
+No Slack, no Redis, no classes. The Slack adapter turns a card into Block Kit, the
+console adapter into text, a future Teams adapter into an Adaptive Card; none of
+them has to know what a facts pack is or call json.loads.
+
+The card never crashes on bad data. A case with no facts, broken JSON or a missing
+GNN score still gives a card: the missing values become None (shown as a dash by
+the helpers below) and the missing lists become empty.
+
+Label maps are copied from services/page/models.py on purpose (the plan says copy
+the small dict rather than import across services). Unknown values fall back to a
+readable form of the raw value, the same rule the page uses.
 """
 import json
-import os
-from datetime import datetime, timezone
+import math
 
-DEFAULT_DASHBOARD_URL = "http://localhost:8501"
-DASH = "—"
+from services.casewriter.template import REQUIRED_KEYS
+
+DASH = "–"
 
 SHAPE_LABELS = {
     "fan-out": "Fan-out",
@@ -25,6 +33,11 @@ SHAPE_LABELS = {
     "other": "Other",
 }
 
+SOURCE_LABELS = {
+    "granite": "Granite, fact-checked",
+    "template": "Template",
+}
+
 PART_LABELS = {
     "summary": "Summary",
     "what_happened": "What happened",
@@ -32,35 +45,57 @@ PART_LABELS = {
     "possible_victim": "Possible victim",
     "suggested_next_step": "Suggested next step",
 }
-PART_ORDER = tuple(PART_LABELS)
 
 DECISION_LABELS = {
-    "freeze": "Freeze recorded",
+    "freeze": "Frozen",
     "dismiss": "Dismissed",
     "more_info": "Needs more info",
 }
 
-BUTTONS = (
-    {"decision": "freeze", "label": "Freeze accounts"},
-    {"decision": "dismiss", "label": "Dismiss"},
-    {"decision": "more_info", "label": "Needs more info"},
-)
+NO_DECISION_LABEL = "Awaiting decision"
+MAX_KEY_FACTS = 8
 
 
-def dashboard_url():
-    return os.environ.get("DASHBOARD_URL", "") or DEFAULT_DASHBOARD_URL
+# --- small parsers ------------------------------------------------------------
+
+def to_float(value):
+    """'0.93' -> 0.93; '', None, 'nan', 'abc' -> None. Never 0 for a missing value."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(out) or math.isinf(out) else out
 
 
-# --- small readers ----------------------------------------------------------------
+def to_int(value):
+    f = to_float(value)
+    return int(f) if f is not None else None
 
-def readable(key):
-    text = (key or "").replace("_", " ").replace("-", " ").strip()
-    return text[:1].upper() + text[1:] if text else "Unknown"
+
+def json_field(value, default):
+    """A JSON text field (or an already parsed value), or `default` if missing or broken."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def normalise_shape(raw):
-    key = (raw or "").strip().lower().replace("_", "-").replace(" ", "-")
+    """'CYCLE', 'Scatter gather', 'fan_out' -> 'cycle', 'scatter-gather', 'fan-out'."""
+    key = str(raw or "").strip().lower().replace("_", "-").replace(" ", "-")
     return key or "other"
+
+
+def readable(key):
+    """Fallback label: 'draft_report' -> 'Draft report'."""
+    text = str(key or "").replace("_", " ").replace("-", " ").strip()
+    return text[:1].upper() + text[1:] if text else "Unknown"
 
 
 def shape_label(raw):
@@ -68,240 +103,170 @@ def shape_label(raw):
     return SHAPE_LABELS.get(key, readable(key))
 
 
-def to_float(value):
-    try:
-        if value is None or value == "" or value == "None":
-            return None
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+def source_label(source):
+    return SOURCE_LABELS.get(source, source or "Unknown source")
 
 
-def to_int(value, default=None):
-    number = to_float(value)
-    return int(number) if number is not None else default
+def part_label(key):
+    return PART_LABELS.get(key, readable(key))
 
 
-def json_value(value, default):
-    """Lists and objects travel as JSON text; a parsed value passes straight through."""
-    if isinstance(value, (dict, list)):
-        return value
-    if value in (None, ""):
-        return default
-    try:
-        return json.loads(value)
-    except (TypeError, ValueError):
-        return default
+def decision_label(decision):
+    return DECISION_LABELS.get(decision, readable(decision))
 
 
-def money(value):
-    number = to_float(value)
-    return DASH if number is None else "${:,.0f}".format(number)
+# --- display helpers (a dash for anything missing) -----------------------------
+
+def money(x):
+    """12345.6 -> '$12,346'; None -> '–'."""
+    x = to_float(x)
+    return DASH if x is None else "${:,.0f}".format(x)
 
 
-def score(value):
-    number = to_float(value)
-    return DASH if number is None else "%.2f" % number
+def pct(x):
+    """98 -> '98%'; None -> '–'."""
+    x = to_float(x)
+    return DASH if x is None else "{:g}%".format(round(x, 1))
 
 
-def parse_time(text):
-    """ISO text -> aware datetime. A naive time (the case writer's written_at) is the
-    host's local time, which is UTC inside the containers."""
-    text = (text or "").strip().replace("Z", "+00:00")
-    if not text:
-        return None
-    try:
-        dt = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.astimezone()   # naive = local time
-    return dt.astimezone(timezone.utc)
+def hours(x):
+    """0.7 -> '0.7 h'; None -> '–'."""
+    x = to_float(x)
+    return DASH if x is None else "{:g} h".format(round(x, 1))
 
 
-def utc_label(text):
-    dt = parse_time(text)
-    return dt.strftime("%Y-%m-%d %H:%M UTC") if dt else (text or "")
+def score(x):
+    """0.9312 -> '0.93'; None -> '–'."""
+    x = to_float(x)
+    return DASH if x is None else "{:.2f}".format(x)
 
 
-def who(decided_by):
-    """'slack:U0123ABC:jane.doe' -> 'jane.doe'; 'console:aryan' -> 'aryan'."""
-    text = (decided_by or "").strip()
-    return text.split(":")[-1] if text else ""
+def short_time(iso_text):
+    """'2026-10-18T14:02:11.123+00:00' -> '2026-10-18 14:02 UTC'. Unreadable text comes back as is."""
+    text = str(iso_text or "")
+    if len(text) < 16 or text[10] not in "T ":
+        return text
+    suffix = " UTC" if text.endswith(("+00:00", "Z")) else ""
+    return text[:10] + " " + text[11:16] + suffix
 
 
-# --- the case ---------------------------------------------------------------------
+def who(decision):
+    """The display name in a decision: 'slack:U0123ABC:jane.doe' -> 'jane.doe',
+    'console:aryan' -> 'aryan'. A decision from the page carries no decided_by."""
+    by = str((decision or {}).get("decided_by") or "").strip()
+    if not by:
+        return ""
+    return by.rsplit(":", 1)[-1] or by
 
-def parse(case):
-    """A `cases` message (all text) -> a dict with real types. Safe to call twice.
-    Raises ValueError only when there is no ring id or no usable summary."""
-    if getattr(case, "get", None) is None:
-        raise ValueError("case is not a mapping")
-    if case.get("_parsed"):
-        return case
-    ring_id = str(case.get("ring_id") or "").strip()
-    if not ring_id:
-        raise ValueError("case without ring_id")
-    summary = json_value(case.get("summary"), None)
-    if not isinstance(summary, dict) or not any(str(summary.get(k) or "").strip() for k in PART_ORDER):
-        raise ValueError("case %s has no readable summary" % ring_id)
-    facts = json_value(case.get("facts"), {})
+
+# --- pieces of the card ---------------------------------------------------------
+
+def key_facts(facts):
+    """Up to eight (label, value text) pairs, in reading order. Facts that are absent
+    (no collector, nothing passed on, no near-threshold transfers) are left out."""
+    f = facts if isinstance(facts, dict) else {}
+    received, sent = to_float(f.get("key_received_usd")), to_float(f.get("key_sent_usd"))
+    passed, after = to_float(f.get("passed_on_pct")), to_float(f.get("hours_to_pass_on"))
+    under, n_transfers = to_int(f.get("n_just_under_threshold")), to_int(f.get("n_transfers"))
+    rows = [
+        ("Key account (possible victim)", f.get("key_account") or None, str(f.get("key_account"))),
+        ("Received", received or None, money(received)),
+        ("Sent on", sent or None, money(sent)),
+        ("Share passed on", passed, pct(passed)),
+        ("Began passing on after", after, hours(after)),
+        ("Collector", f.get("collector") or None, str(f.get("collector"))),
+        ("Origin", f.get("origin") or None, str(f.get("origin"))),
+        ("Just under reporting threshold", under or None, "%s transfers" % under),
+        ("Transfers", n_transfers, str(n_transfers)),
+    ]
+    return [(label, text) for label, value, text in rows if value is not None][:MAX_KEY_FACTS]
+
+
+def summary_parts(value):
+    """The five summary parts in REQUIRED_KEYS order; a missing part is ''."""
+    obj = json_field(value, {})
+    if not isinstance(obj, dict):
+        obj = {"summary": str(obj)}
+    return [(part_label(k), str(obj.get(k) or "")) for k in REQUIRED_KEYS]
+
+
+def status_of(decision):
+    """The status block from a decision dict (or None for an open ring).
+    `label` is the decision word ("Frozen"), or "Awaiting decision" for an open ring."""
+    if not decision or not decision.get("decision"):
+        return {"decision": None, "decided_by": "", "decided_at": "", "note": "",
+                "label": NO_DECISION_LABEL}
+    kind = str(decision.get("decision")).strip().lower()
+    label = decision_label(kind)   # just the word; adapters add who and when themselves
+    return {"decision": kind, "decided_by": str(decision.get("decided_by") or ""),
+            "decided_at": str(decision.get("decided_at") or ""),
+            "note": str(decision.get("note") or ""), "label": label}
+
+
+def _ring_total(ring):
+    edges = json_field(ring.get("edges"), [])
+    total, seen = 0.0, False
+    for e in edges if isinstance(edges, list) else []:
+        amount = to_float(e.get("amount_usd") if isinstance(e, dict)
+                          else (e[3] if isinstance(e, (list, tuple)) and len(e) > 3 else None))
+        if amount is not None:
+            total, seen = total + amount, True
+    return total if seen else None
+
+
+def _first(*values):
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def build(case_fields, ring_fields=None, status=None, markers=(), dashboard_url=""):
+    """One card. `status` is a decision dict (as read from `decisions`) or None.
+
+    Every key below is part of the adapters' contract; do not rename them.
+    """
+    case = case_fields or {}
+    ring = ring_fields or {}
+    facts = json_field(case.get("facts"), {})
     if not isinstance(facts, dict):
         facts = {}
+
+    reasons = facts.get("top_reasons")
+    if not isinstance(reasons, list) or not reasons:
+        reasons = json_field(ring.get("reasons"), [])
+    if isinstance(reasons, str):
+        reasons = [reasons]
+    if not isinstance(reasons, list):
+        reasons = []
+
+    shape = str(facts.get("shape") or ring.get("shape") or "")
+    source = str(case.get("source") or "").strip().lower()
+    st = status_of(status)
     return {
-        "_parsed": True,
-        "ring_id": ring_id,
-        "version": to_int(case.get("version"), 0),
-        "summary": summary,
-        "source": str(case.get("source") or "template").strip().lower(),
+        "ring_id": str(case.get("ring_id") or ring.get("ring_id") or ""),
+        "version": str(case.get("version") or ring.get("version") or ""),
+        "shape": shape,
+        "shape_label": shape_label(shape),
+        "n_accounts": _first(to_int(facts.get("n_accounts")), to_int(ring.get("n_accounts"))),
+        "xgb_score": _first(to_float(facts.get("xgb_score")), to_float(ring.get("xgb_score"))),
+        "gnn_score": _first(to_float(facts.get("gnn_score")), to_float(ring.get("gnn_score"))),
+        "total_usd": _first(to_float(facts.get("total_usd")), _ring_total(ring)),
+        "facts": facts,
+        "key_facts": key_facts(facts),
+        "summary": summary_parts(case.get("summary")),
+        "reasons": [str(x) for x in reasons][:3],
+        "source": source,
+        "source_label": source_label(source),
         "check_note": str(case.get("check_note") or ""),
         "written_at": str(case.get("written_at") or ""),
-        "facts": facts,
-        # optional extras the case writer may add; never required
-        "written_after_s": to_float(case.get("written_after_s")),
-        "ring_last_seen": str(case.get("ring_last_seen") or ""),
+        "dashboard_url": dashboard_url or "",
+        "status": st,
+        "markers": [str(m) for m in markers or ()],
+        "buttons_enabled": st["decision"] is None,
     }
 
 
-def rank(case):
-    """Which case is newer for a ring: higher version, then Granite over template
-    (the case writer publishes the template first and Granite seconds later)."""
-    return (case["version"], 1 if case["source"] == "granite" else 0)
-
-
-def granite_failed(case):
-    note = case["check_note"].strip().lower()
-    return case["source"] != "granite" and (note.startswith("granite error") or note.startswith("granite reply rejected"))
-
-
-def source_line(case):
-    if case["source"] == "granite":
-        if case["check_note"].strip().lower() == "passed fact check":
-            return "Written by Granite, passed the fact check"
-        return "Written by Granite"
-    if granite_failed(case):
-        return "Template summary: Granite failed or its reply failed the fact check for this version"
-    return "Template summary (Granite not used for this version)"
-
-
-def decision_view(decision):
-    """A decisions message -> what the card shows about it."""
-    if not decision:
-        return None
-    kind = (decision.get("decision") or "").strip().lower()
-    label = DECISION_LABELS.get(kind, readable(kind))
-    by = who(decision.get("decided_by"))
-    text = label
-    if by:
-        text += " by @" + by
-    if decision.get("decided_at"):
-        text += " at " + utc_label(decision["decided_at"])
-    if decision.get("version"):
-        text += " (v%s)" % decision["version"]
-    if decision.get("channel"):
-        text += " via " + decision["channel"]
-    return {
-        "decision": kind,
-        "label": label,
-        "by": by,
-        "version": to_int(decision.get("version")),
-        "note": decision.get("note", ""),
-        "text": text,
-    }
-
-
-def decided_for(decision, version):
-    """True when this decision already covers the given ring version, so the buttons
-    go away. A decision on v1 leaves v2's buttons live: the ring changed."""
-    if not decision:
-        return False
-    seen = to_int(decision.get("version"))
-    version = to_int(version)
-    if seen is None or version is None:
-        return True
-    return seen >= version
-
-
-def _fields(facts):
-    if not facts:
-        return []
-    out = [
-        ("Accounts", str(facts["n_accounts"]) if facts.get("n_accounts") is not None else DASH),
-        ("Total moved", money(facts.get("total_usd"))),
-        ("Transfer model", score(facts.get("xgb_score"))),
-        ("Graph model", score(facts.get("gnn_score"))),
-    ]
-    if facts.get("key_account"):
-        out.append(("Possible victim", str(facts["key_account"])))
-    if facts.get("passed_on_pct") is not None:
-        text = "%s%%" % facts["passed_on_pct"]
-        if facts.get("hours_to_pass_on") is not None:
-            text += " within %s h" % facts["hours_to_pass_on"]
-        out.append(("Passed on", text))
-    if facts.get("collector"):
-        out.append(("Collector", str(facts["collector"])))
-    reasons = facts.get("top_reasons") or []
-    if isinstance(reasons, list) and reasons:
-        out.append(("Top reasons", "; ".join(str(x) for x in reasons)))
-    return out
-
-
-def build(case, decision=None, markers=(), notes=(), footer_notes=(), dashboard=None):
-    """The neutral card for one case.
-
-    decision      the ring's latest decisions message (or None)
-    markers       short lines at the top, e.g. "updated to v3", "Granite summary arrived"
-    notes         lines under the title, e.g. the related-ring note
-    footer_notes  extra small lines at the bottom, e.g. the suppression footer
-    """
-    case = parse(case)
-    facts = case["facts"]
-    shape = facts.get("shape")
-    title = "Ring %s" % case["ring_id"]
-    if shape:
-        title += " · " + shape_label(shape)
-    if facts.get("n_accounts") is not None:
-        title += " · %s accounts" % facts["n_accounts"]
-
-    parts = [(k, PART_LABELS[k], str(case["summary"].get(k) or "").strip()) for k in PART_ORDER]
-    parts = [p for p in parts if p[2]]
-
-    footer = [source_line(case)]
-    if case["check_note"]:
-        footer.append("Check: " + case["check_note"])
-    written = "Written " + utc_label(case["written_at"]) if case["written_at"] else ""
-    if case["written_after_s"] is not None:
-        written += " (%.1f s after the ring)" % case["written_after_s"]
-    if written:
-        footer.append(written.strip())
-    footer.extend(footer_notes)
-
-    seen = decision_view(decision)
-    buttons = [] if decided_for(decision, case["version"]) else [dict(b) for b in BUTTONS]
-
-    return {
-        "ring_id": case["ring_id"],
-        "version": case["version"],
-        "title": title,
-        "shape": shape_label(shape) if shape else "",
-        "source": case["source"],
-        "fields": _fields(facts),
-        "parts": parts,
-        "markers": list(markers),
-        "notes": list(notes),
-        "decision": seen,
-        "buttons": buttons,
-        "footer": footer,
-        "dashboard_url": dashboard or dashboard_url(),
-    }
-
-
-def fallback_text(card):
-    """One line for notifications and for clients that cannot draw cards."""
-    first = card["parts"][0][2] if card["parts"] else ""
-    text = card["title"]
-    if card["markers"]:
-        text += " (" + ", ".join(card["markers"]) + ")"
-    if first:
-        text += ": " + first
-    return text[:300]
+CARD_KEYS = ("ring_id", "version", "shape", "shape_label", "n_accounts", "xgb_score", "gnn_score",
+             "total_usd", "facts", "key_facts", "summary", "reasons", "source", "source_label",
+             "check_note", "written_at", "dashboard_url", "status", "markers", "buttons_enabled")

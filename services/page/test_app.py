@@ -302,3 +302,17 @@ def test_step_pages_without_a_selection_point_back_to_the_queue(r):
     at = run("decide")
     assert not at.exception
     assert any("Choose a case before recording" in m.value for m in at.markdown)
+
+
+def test_decide_offers_the_case_packet_once_a_case_exists(r):
+    add_ring(r, "R-1")
+    at = run("decide")
+    assert not at.exception
+    assert any("available once the case writer" in c.value for c in at.caption)
+    assert any(b.label == "Download case packet (.md)" and b.disabled for b in at.button)
+    add_case(r, "R-1")
+    at = run("decide")
+    assert not at.exception
+    button, = [b for b in at.get("download_button")]
+    assert button.proto.label == "Download case packet (.md)" and not button.proto.disabled
+    assert any("Every number traces to clean.csv" in c.value for c in at.caption)

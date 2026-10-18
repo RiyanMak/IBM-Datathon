@@ -1,264 +1,440 @@
-"""The case packet: one Markdown page per ring, the draft of what an investigator files.
-
-Every number comes from the case writer's facts pack, except the transfers table,
-whose rows are the ring's own edges, each with its txn_id so anyone can trace it to
-clean.csv and from there (source_row) to the raw CSV line.
+"""The case packet: one Markdown document per ring, the draft an investigator would file.
 
     from services.notifier import packet
-    text = packet.render(case, decisions, ring)
+    text = packet.render(case_fields, ring_fields, decisions, manifest)
+    name = packet.filename(case_fields)          # case_R-0042_v3.md
 
-`case` is a `cases` message, `decisions` the ring's decisions oldest first, `ring`
-its `rings` message (optional: without it the packet has no transfer detail).
+Built from the `cases` message (the summary and the facts pack the case writer
+computed), the matching `rings` message (the accounts and the transfers, which cases
+do not carry) and the `decisions` messages for the ring. Every number in the summary
+and the key facts comes from the facts pack, and every transfer line carries its
+`txn_id`, so anyone can trace it back to clean.csv and from there to the raw CSV line.
+That is the answer to "how do you know the AI did not make this up".
+
+Sections, in order: header, summary (the five parts), key facts, accounts with roles,
+transfers, data lineage, decision log, disclaimer.
+
+Never raises on bad data. Redis hands us text; a field that is missing, empty or broken
+JSON simply leaves its part of the packet short ("not available"), so a half-written
+case still gives a readable packet. No Slack, no Redis here: the Slack adapter uploads
+the text, the page could offer it as a download, and `check_numbers` is used by tests.
+
+Label maps are copied from services/page/models.py on purpose (the plan says copy the
+small dict rather than import across services).
 """
 import json
-import re
+import math
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 
-from common.paths import DATA_DIR
-from services.notifier.cards import (DASH, DECISION_LABELS, PART_LABELS, PART_ORDER, json_value, money,
-                                     parse, parse_time, score, shape_label, source_line, to_float)
+from services.casewriter import factcheck
+from services.casewriter.template import REQUIRED_KEYS
 
-MAX_ROWS = 200
-MANIFEST = "cleaning_manifest.json"
-EDGE_FIELDS = ["txn_id", "from", "to", "amount_usd", "ts", "score"]   # list form, as agreed
-SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+MAX_TRANSFER_ROWS = 200
+DASH = "-"
 
-DISCLAIMER = (
-    "This packet was built from synthetic data (IBM AML HI-Small). It describes activity "
-    "*consistent with* a money-laundering pattern; it is not an accusation. The account marked "
-    "\"possible victim\" may be a recruited money mule and should be treated as a victim until "
-    "reviewed. The models recommend and explain; a person decides."
-)
+SHAPE_LABELS = {
+    "fan-out": "Fan-out",
+    "fan-in": "Fan-in",
+    "scatter-gather": "Scatter-gather",
+    "gather-scatter": "Gather-scatter",
+    "cycle": "Cycle",
+    "bipartite": "Bipartite",
+    "stack": "Stack",
+    "other": "Other",
+}
+
+SOURCE_LABELS = {
+    "granite": "Granite, fact-checked",
+    "template": "Template",
+}
+
+PART_LABELS = {
+    "summary": "Summary",
+    "what_happened": "What happened",
+    "why_suspicious": "Why it is suspicious",
+    "possible_victim": "Possible victim",
+    "suggested_next_step": "Suggested next step",
+}
+
+DECISION_LABELS = {
+    "freeze": "Frozen",
+    "dismiss": "Dismissed",
+    "more_info": "Needs more info",
+}
+
+# Section headings. check_numbers finds the checked part of the packet by these.
+H_SUMMARY = "## Summary"
+H_FACTS = "## Key facts"
+H_ACCOUNTS = "## Accounts involved"
+H_TRANSFERS = "## Transfers"
+H_LINEAGE = "## Data lineage"
+H_DECISIONS = "## Decision log"
+H_DISCLAIMER = "## Disclaimer"
+
+NO_TRANSFERS = "No transfer detail available for this ring (the ring message was not found)."
+
+# Used when no cleaning_manifest.json is at hand: the hash of the reference input.
+FALLBACK_INPUT_SHA256 = "b19d39f515523373f991b689c07e11e7b0b95c17a2c27a87d91584ae16c5b040"
 
 
-def cell(value):
-    """Text that is safe inside a Markdown table cell."""
-    text = DASH if value is None or value == "" else str(value)
-    return text.replace("|", "\\|").replace("\n", " ")
+# ---------------------------------------------------------------- reading text values
+
+def _text(value):
+    """Redis may hand us bytes; turn them into normal text."""
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", "replace")
+    return value
 
 
-def parse_edge(edge):
-    """One edge, sent as a dict or as a list. Returns None for something unreadable."""
-    if isinstance(edge, dict):
-        e = {k: edge.get(k) for k in EDGE_FIELDS}
-        e["from"] = e["from"] if e["from"] is not None else edge.get("from_acct")
-        e["to"] = e["to"] if e["to"] is not None else edge.get("to_acct")
-    elif isinstance(edge, (list, tuple)) and len(edge) >= 5:
-        e = dict(zip(EDGE_FIELDS, list(edge) + [None] * (len(EDGE_FIELDS) - len(edge))))
+def _clean(fields):
+    """A message with text keys and values, or {} for anything that is not a dict."""
+    if not isinstance(fields, dict):
+        return {}
+    return {_text(k): _text(v) for k, v in fields.items()}
+
+
+def _json(value, default):
+    """Lists and objects travel as JSON text. Broken or missing JSON gives the default."""
+    value = _text(value)
+    if value is None or value == "":
+        return default
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return default
     else:
+        parsed = value
+    return parsed if isinstance(parsed, type(default)) else default
+
+
+def _num(value):
+    """A float, or None for missing, empty, 'None' or text that is not a number."""
+    value = _text(value)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def _cell(value):
+    """Text that is safe inside a Markdown table cell."""
+    if value is None or value == "":
+        return DASH
+    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip() or DASH
+
+
+def _readable(key):
+    text = str(key or "").replace("_", " ").replace("-", " ").strip()
+    return text[:1].upper() + text[1:] if text else "Unknown"
+
+
+def _shape_label(shape):
+    key = str(shape or "").strip().lower().replace("_", "-").replace(" ", "-")
+    return SHAPE_LABELS.get(key, _readable(key)) if key else "Unknown shape"
+
+
+def _money(x, cents=False):
+    x = _num(x)
+    if x is None:
+        return DASH
+    return ("${:,.2f}" if cents else "${:,.0f}").format(x)
+
+
+def _plain(x, suffix=""):
+    """A number as written in the facts pack (no rounding beyond what it already has)."""
+    x = _num(x)
+    if x is None:
+        return DASH
+    text = ("%d" % x) if x == int(x) else ("%g" % x)
+    return text + suffix
+
+
+def _score(x):
+    x = _num(x)
+    return DASH if x is None else "%.2f" % x
+
+
+# ---------------------------------------------------------------- the pieces
+
+def filename(case_fields):
+    """The attachment name: case_<ring_id>_v<version>.md."""
+    c = _clean(case_fields)
+    ring_id = str(c.get("ring_id") or "R-unknown").replace("/", "_").replace(" ", "_")
+    version = str(c.get("version") or "1").replace("/", "_").replace(" ", "_")
+    return "case_%s_v%s.md" % (ring_id, version)
+
+
+def load_manifest(path=None):
+    """cleaning_manifest.json from the data folder (or `path`) as a dict, or None.
+
+    The packet takes the input file's SHA-256 from it. Missing or broken file: None,
+    and the packet falls back to the reference hash.
+    """
+    if path is None:
+        data_dir = os.environ.get("DATA_DIR", "/data/data")
+        path = Path(data_dir) / "cleaning_manifest.json"
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _input_sha256(manifest):
+    if isinstance(manifest, dict) and manifest.get("input_sha256"):
+        return str(manifest["input_sha256"])
+    try:
+        from scripts.validate_clean import KEVIN_REFERENCE
+        return str(KEVIN_REFERENCE["input_sha256"])
+    except Exception:   # scripts/ not importable (pandas missing...): same constant, copied
+        return FALLBACK_INPUT_SHA256
+
+
+def _parse_edge(edge):
+    """One transfer as a dict of text-ish values, or None when it is unusable."""
+    if isinstance(edge, (list, tuple)) and len(edge) >= 5:
+        names = ["txn_id", "from", "to", "amount_usd", "ts", "score"]
+        edge = dict(zip(names, list(edge) + [None] * (6 - len(edge))))
+    if not isinstance(edge, dict):
         return None
     return {
-        "txn_id": str(e["txn_id"]),
-        "from": str(e["from"]),
-        "to": str(e["to"]),
-        "amount_usd": to_float(e["amount_usd"]),
-        "ts": str(e["ts"] or ""),
-        "score": to_float(e["score"]),
+        "txn_id": "" if edge.get("txn_id") is None else str(edge.get("txn_id")),
+        "from": str(edge.get("from") or edge.get("from_acct") or ""),
+        "to": str(edge.get("to") or edge.get("to_acct") or ""),
+        "amount_usd": _num(edge.get("amount_usd")),
+        "ts": "" if edge.get("ts") is None else str(edge.get("ts")),
+        "score": _num(edge.get("score")),
     }
 
 
-def ring_parts(ring):
-    """A `rings` message -> (accounts, edges sorted by time). Tolerates None."""
-    if not ring:
-        return [], []
-    edges = [e for e in (parse_edge(x) for x in json_value(ring.get("edges"), []) or []) if e]
-    edges.sort(key=lambda e: e["ts"])
-    accounts = [str(a) for a in json_value(ring.get("accounts"), []) or []]
-    if not accounts:
-        accounts = sorted({e["from"] for e in edges} | {e["to"] for e in edges})
-    return accounts, edges
+def _txn_sort_key(e):
+    try:
+        return (e["ts"], 0, int(e["txn_id"]), "")
+    except ValueError:
+        return (e["ts"], 1, 0, e["txn_id"])
 
 
-# --- data lineage -----------------------------------------------------------------
-
-def _hashes(node, path=""):
-    """Every (path, sha256) pair anywhere in the manifest, whatever its layout."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            yield from _hashes(v, path + "/" + str(k))
-    elif isinstance(node, list):
-        for i, v in enumerate(node):
-            yield from _hashes(v, path + "/" + str(i))
-    elif isinstance(node, str) and SHA_RE.match(node.strip().lower()):
-        yield path.lower(), node.strip().lower()
+def edges_of(ring_fields):
+    """The ring's transfers sorted by time, broken ones left out. [] when there are none."""
+    r = _clean(ring_fields)
+    edges = [_parse_edge(e) for e in _json(r.get("edges"), [])]
+    return sorted((e for e in edges if e is not None), key=_txn_sort_key)
 
 
-def manifest_hash(data_dir=None):
-    """SHA-256 of the raw transactions file from cleaning_manifest.json, or ''."""
-    data_dir = DATA_DIR if data_dir is None else data_dir
-    from pathlib import Path
-    for path in (Path(data_dir) / MANIFEST, Path(data_dir) / "v1" / MANIFEST):
-        try:
-            manifest = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        found = list(_hashes(manifest))
-        # the transactions file is the one clean.csv comes from; else the first hash
-        for p, h in found:
-            if "trans" in p:
-                return h
-        if found:
-            return found[0][1]
-    return ""
+def _roles(facts):
+    roles = {}
+    for name, label in (("key_account", "possible victim (key account)"),
+                        ("origin", "origin"), ("collector", "collector")):
+        acct = facts.get(name)
+        if acct:
+            roles.setdefault(str(acct), label)
+    return roles
 
 
-def lineage(data_dir=None):
-    digest = manifest_hash(data_dir)
-    if digest:
-        first = ("Transaction IDs refer to `clean.csv` from the cleaning run whose raw transactions "
-                 "file has SHA-256 `%s` (from `cleaning_manifest.json`)." % digest)
-    else:
-        first = ("Transaction IDs refer to `clean.csv` from the team's cleaning run "
-                 "(no `cleaning_manifest.json` was found, so the input hash is not shown).")
-    return (first + " Each row of `clean.csv` keeps `source_row`, the line of the raw CSV it came from. "
-            "Amounts in USD use exchange rates fitted on the training period only (`fx_rates.json`).")
-
-
-# --- the packet ---------------------------------------------------------------------
-
-def _key_facts(f):
-    hours = lambda v: DASH if v is None else "%s h" % v
-    pct = lambda v: DASH if v is None else "%s%%" % v
-    under = DASH
-    if f.get("n_just_under_threshold") is not None:
-        under = str(f["n_just_under_threshold"])
-        if f.get("reporting_threshold_usd") is not None:
-            under += " (just under the %s reporting threshold)" % money(f["reporting_threshold_usd"])
-    reasons = f.get("top_reasons") or []
+def _header(c, facts, ring, now):
+    ring_id = c.get("ring_id") or facts.get("ring_id") or "R-unknown"
+    version = c.get("version") or ring.get("version") or DASH
+    shape = facts.get("shape") or ring.get("shape")
+    source = c.get("source") or ""
+    generated = (now or datetime.now(timezone.utc))
+    if generated.tzinfo is not None:
+        generated = generated.astimezone(timezone.utc)
     return [
-        ("Total moved", money(f.get("total_usd")) if f.get("total_usd") is not None else DASH),
-        ("Accounts", f.get("n_accounts")),
-        ("Transfers", f.get("n_transfers")),
-        ("First seen (data time)", (f.get("first_seen") or "").replace("T", " ")),
-        ("Last seen (data time)", (f.get("last_seen") or "").replace("T", " ")),
-        ("Duration", hours(f.get("duration_hours"))),
-        ("Possible victim (key account)", f.get("key_account")),
-        ("Key account received", money(f.get("key_received_usd")) if f.get("key_received_usd") is not None else DASH),
-        ("Key account sent on", money(f.get("key_sent_usd")) if f.get("key_sent_usd") is not None else DASH),
-        ("Share passed on", pct(f.get("passed_on_pct"))),
-        ("Time to pass on", hours(f.get("hours_to_pass_on"))),
-        ("Origin", f.get("origin")),
-        ("Collector", f.get("collector")),
-        ("Transfers just under threshold", under),
-        ("Transfer model score", score(f.get("xgb_score"))),
-        ("Graph model score", score(f.get("gnn_score"))),
-        ("Top reasons", "; ".join(str(x) for x in reasons) if isinstance(reasons, list) else ""),
+        "# Case packet: %s, version %s" % (ring_id, version),
+        "",
+        "| | |",
+        "|---|---|",
+        "| Ring | %s |" % _cell(ring_id),
+        "| Version | %s |" % _cell(version),
+        "| Shape | %s |" % _cell(_shape_label(shape)),
+        "| Generated at | %s UTC |" % generated.strftime("%Y-%m-%d %H:%M:%S"),
+        "| Case written at | %s |" % _cell(c.get("written_at")),
+        "| Narrative source | %s |" % _cell(SOURCE_LABELS.get(source, source or "Unknown source")),
+        "| Fact check | %s |" % _cell(c.get("check_note")),
+        "",
     ]
 
 
-def _seconds(text):
-    """Decision time to the second, in UTC (two clicks can share a minute)."""
-    dt = parse_time(text)
-    return dt.strftime("%Y-%m-%d %H:%M:%S UTC") if dt else text
+def _summary(c):
+    parts = _json(c.get("summary"), {})
+    lines = [H_SUMMARY, ""]
+    for key in REQUIRED_KEYS:
+        text = parts.get(key)
+        text = str(text).strip() if text not in (None, "") else "(not available)"
+        lines += ["### " + PART_LABELS.get(key, _readable(key)), "", text, ""]
+    return lines
 
 
-def _role(account, f):
-    if account == f.get("key_account"):
-        return "possible victim"
-    if account == f.get("origin"):
-        return "origin"
-    if account == f.get("collector"):
-        return "collector"
-    return "other"
+def _key_facts(facts):
+    f = facts
+    pct = "%" if _num(f.get("passed_on_pct")) is not None else ""
+    hours = " hours" if _num(f.get("hours_to_pass_on")) is not None else ""
+    dur = " hours" if _num(f.get("duration_hours")) is not None else ""
+    under = DASH
+    if _num(f.get("n_just_under_threshold")) is not None:
+        under = "%s (reporting threshold %s)" % (
+            _plain(f.get("n_just_under_threshold")), _money(f.get("reporting_threshold_usd")))
+    reasons = f.get("top_reasons") if isinstance(f.get("top_reasons"), list) else []
+    rows = [
+        ("Total moved", _money(f.get("total_usd"))),
+        ("Accounts", _plain(f.get("n_accounts"))),
+        ("Transfers", _plain(f.get("n_transfers"))),
+        ("First seen", f.get("first_seen")),
+        ("Last seen", f.get("last_seen")),
+        ("Duration", _plain(f.get("duration_hours"), dur)),
+        ("Possible victim (key account)", f.get("key_account")),
+        ("Key account received", _money(f.get("key_received_usd"))),
+        ("Key account sent on", _money(f.get("key_sent_usd"))),
+        ("Share passed on", _plain(f.get("passed_on_pct"), pct)),
+        ("Hours until it passed money on", _plain(f.get("hours_to_pass_on"), hours)),
+        ("Origin", f.get("origin")),
+        ("Collector", f.get("collector")),
+        ("Transfers just under the threshold", under),
+        ("Model score (XGBoost, ring mean)", _score(f.get("xgb_score"))),
+        ("Graph score (GNN)", _score(f.get("gnn_score"))),
+        ("Top reasons", "; ".join(str(x) for x in reasons) if reasons else None),
+    ]
+    lines = [H_FACTS, "", "| Fact | Value |", "|---|---|"]
+    lines += ["| %s | %s |" % (name, _cell(value)) for name, value in rows]
+    if not facts:
+        lines += ["", "The facts pack was not available for this case."]
+    return lines + [""]
 
 
-def render(case, decisions=(), ring=None, now=None, max_rows=MAX_ROWS, data_dir=None):
-    """The packet as Markdown text."""
-    case = parse(case)
-    f = case["facts"]
-    now = now or datetime.now(timezone.utc)
-    accounts, edges = ring_parts(ring)
-    lines = []
-    add = lines.append
-
-    add("# Case packet: ring %s, version %s" % (case["ring_id"], case["version"]))
-    add("")
-    add("- **Shape:** %s" % (shape_label(f["shape"]) if f.get("shape") else DASH))
-    add("- **Prepared:** %s" % now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-    add("- **Narrative:** %s" % source_line(case))
-    add("- **Check note:** %s" % (case["check_note"] or DASH))
-    add("")
-
-    add("## Summary")
-    add("")
-    for key in PART_ORDER:
-        text = str(case["summary"].get(key) or "").strip()
-        add("**%s.** %s" % (PART_LABELS[key], text or DASH))
-        add("")
-
-    add("## Key facts")
-    add("")
-    if f:
-        add("| Fact | Value |")
-        add("|---|---|")
-        for label, value in _key_facts(f):
-            add("| %s | %s |" % (label, cell(value)))
-    else:
-        add("No facts pack came with this case.")
-    add("")
-
-    add("## Accounts involved")
-    add("")
+def _accounts(facts, ring):
+    accounts = [str(a) for a in _json(ring.get("accounts"), [])]
+    roles = _roles(facts)
+    lines = [H_ACCOUNTS, ""]
     if not accounts:
-        accounts = [a for a in (f.get("key_account"), f.get("origin"), f.get("collector")) if a]
+        accounts = list(roles)
         if accounts:
-            add("The ring message was not found, so only the accounts named in the facts are listed.")
-            add("")
-    if accounts:
-        add("| Account | Role |")
-        add("|---|---|")
-        for account in accounts:
-            add("| %s | %s |" % (cell(account), _role(account, f)))
-    else:
-        add("No account detail.")
-    add("")
+            lines += ["Only the accounts named in the facts pack (the ring message was not found).", ""]
+    if not accounts:
+        return lines + ["No account detail available.", ""]
+    ordered = [a for a in roles if a in accounts] + sorted(a for a in accounts if a not in roles)
+    lines += ["| Account | Role |", "|---|---|"]
+    lines += ["| %s | %s |" % (_cell(a), roles.get(a, "other")) for a in ordered]
+    return lines + [""]
 
-    add("## Transfers")
-    add("")
+
+def _transfers(ring_fields):
+    lines = [H_TRANSFERS, ""]
+    if ring_fields is None:
+        return lines + [NO_TRANSFERS, ""]
+    edges = edges_of(ring_fields)
     if not edges:
-        add("No transfer detail: the ring's edges were not available when this packet was written.")
-    else:
-        shown = edges[:max_rows]
-        if len(edges) > max_rows:
-            add("Showing the first %d of %d transfers, sorted by time. The full list is in the ring "
-                "message on the `rings` stream." % (max_rows, len(edges)))
-            add("")
-        add("| Time (data) | txn_id | From | To | Amount (USD) | Score |")
-        add("|---|---|---|---|---|---|")
-        for e in shown:
-            amount = DASH if e["amount_usd"] is None else "${:,.2f}".format(e["amount_usd"])
-            add("| %s | %s | %s | %s | %s | %s |" % (
-                cell(e["ts"].replace("T", " ")), cell(e["txn_id"]), cell(e["from"]), cell(e["to"]),
-                amount, score(e["score"])))
-    add("")
+        return lines + ["No transfer detail available for this ring.", ""]
+    lines += ["| Time | txn_id | From | To | Amount (USD) | Score |", "|---|---|---|---|---|---|"]
+    for e in edges[:MAX_TRANSFER_ROWS]:
+        lines.append("| %s | %s | %s | %s | %s | %s |" % (
+            _cell(e["ts"]), _cell(e["txn_id"]), _cell(e["from"]), _cell(e["to"]),
+            _money(e["amount_usd"], cents=True), _score(e["score"])))
+    if len(edges) > MAX_TRANSFER_ROWS:
+        lines += ["", "Showing the first %d of %d transfers, in time order. The full list is in "
+                      "the ring message on the `rings` stream." % (MAX_TRANSFER_ROWS, len(edges))]
+    return lines + [""]
 
-    add("## Data lineage")
-    add("")
-    add(lineage(data_dir))
-    add("")
 
-    add("## Decision log")
-    add("")
-    if decisions:
-        add("| Decided at | Decision | By | Channel | Version | Note |")
-        add("|---|---|---|---|---|---|")
-        for d in sorted(decisions, key=lambda d: d.get("decided_at", "")):
-            kind = (d.get("decision") or "").strip().lower()
-            add("| %s | %s | %s | %s | %s | %s |" % (
-                cell(_seconds(d.get("decided_at"))), cell(DECISION_LABELS.get(kind, kind)),
-                cell(d.get("decided_by")), cell(d.get("channel") or ("page" if not d.get("decided_by") else "")),
-                cell(d.get("version")), cell(d.get("note"))))
-    else:
-        add("No decision recorded yet.")
-    add("")
+def _lineage(manifest):
+    return [H_LINEAGE, "",
+            "Transaction IDs refer to clean.csv (input HI-Small_Trans.csv SHA-256 %s). Amounts in USD "
+            "use exchange rates fitted on the training period only (fx_rates.json)." % _input_sha256(manifest),
+            ""]
 
-    add("## Disclaimer")
-    add("")
-    add(DISCLAIMER)
-    add("")
+
+def _decisions(decisions, ring_id):
+    rows = []
+    for d in decisions or []:
+        d = _clean(d)
+        if not d:
+            continue
+        if ring_id and d.get("ring_id") and d.get("ring_id") != ring_id:
+            continue
+        rows.append(d)
+    rows.sort(key=lambda d: str(d.get("decided_at") or ""))
+    lines = [H_DECISIONS, ""]
+    if not rows:
+        return lines + ["No decision recorded yet.", ""]
+    lines += ["| Decided at (UTC) | Version | Decision | By | Channel | Note |", "|---|---|---|---|---|---|"]
+    for d in rows:
+        decision = str(d.get("decision") or "")
+        lines.append("| %s | %s | %s | %s | %s | %s |" % (
+            _cell(d.get("decided_at")), _cell(d.get("version")),
+            _cell(DECISION_LABELS.get(decision, _readable(decision))),
+            _cell(d.get("decided_by") or "page"), _cell(d.get("channel") or "page"), _cell(d.get("note"))))
+    return lines + [""]
+
+
+DISCLAIMER = [
+    H_DISCLAIMER, "",
+    "Built from the IBM synthetic anti-money-laundering dataset (HI-Small); no real customers. "
+    "This packet describes activity consistent with a money-laundering pattern; it is not an "
+    "accusation. The model recommends and explains; a person decides.",
+    "",
+]
+
+
+def render(case_fields, ring_fields=None, decisions=(), manifest=None, now=None):
+    """The whole packet as Markdown text. Never raises on bad or missing fields."""
+    c = _clean(case_fields)
+    ring = _clean(ring_fields)
+    facts = _json(c.get("facts"), {})
+    ring_id = str(c.get("ring_id") or facts.get("ring_id") or ring.get("ring_id") or "")
+    lines = (_header(c, facts, ring, now) + _summary(c) + _key_facts(facts) + _accounts(facts, ring)
+             + _transfers(ring_fields if ring else None) + _lineage(manifest)
+             + _decisions(decisions, ring_id) + DISCLAIMER)
     return "\n".join(lines)
 
 
-def filename(case):
-    case = parse(case)
-    return "case_%s_v%s.md" % (case["ring_id"], case["version"])
+# ---------------------------------------------------------------- the number check
+
+def numbers_in(text):
+    """Every number in a piece of text, ignoring account IDs, dates, times and ring IDs.
+
+    The case writer's fact-check rule, reused so the packet is held to the same standard
+    as a Granite reply.
+    """
+    return factcheck.numbers_in(str(text or ""))
+
+
+def _section(text, start, end):
+    i = text.find(start)
+    if i < 0:
+        return ""
+    j = text.find(end, i)
+    return text[i:j if j >= 0 else len(text)]
+
+
+def check_numbers(packet_text, facts, ring_fields=None):
+    """Numbers in the summary and key facts that are in neither the facts pack nor the edges.
+
+    Returns them as text ([] means every number traces back). The header, transfer table,
+    lineage and decision log are not checked: they hold txn_ids, timestamps, versions and
+    hashes, which are references rather than claims.
+    """
+    if isinstance(facts, str):
+        facts = _json(facts, {})
+    facts = facts if isinstance(facts, dict) else {}
+    try:
+        allowed = factcheck.allowed_numbers(facts)
+    except Exception:   # a broken date in the facts: fall back to the plain numbers
+        allowed = set(factcheck.ALWAYS_ALLOWED)
+        allowed.update(float(v) for v in facts.values()
+                       if isinstance(v, (int, float)) and not isinstance(v, bool))
+    for e in edges_of(ring_fields) if ring_fields else []:
+        for name in ("amount_usd", "score"):
+            if e[name] is not None:
+                allowed.add(float(e[name]))
+    checked = _section(packet_text, H_SUMMARY, H_ACCOUNTS)
+    bad = []
+    for n in numbers_in(checked):
+        if not any(factcheck.is_close(n, v) for v in allowed):
+            bad.append("%g" % n)
+    return bad

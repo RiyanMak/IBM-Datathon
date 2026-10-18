@@ -1,123 +1,154 @@
-"""Console adapter: cards as text on stdout, clicks typed on stdin.
+"""The console adapter: cards printed as text, clicks typed as commands. No network.
 
-The no-network demo path and what the tests use:
+This is the demo path when there is no Slack workspace or no internet, and it is
+what the tests use. Run it with:
 
-    freeze R-0042
-    dismiss R-0042 looks like payroll
-    more_info R-0042 ask the bank for KYC documents
+    python -m services.notifier.main --console
 
-Lines are read in a background thread from `lines` (stdin by default), so tests can
-pass a list instead.
+Commands, one per line (the note is optional):
+
+    freeze R-0042 accounts confirmed with the bank
+    dismiss R-0042 known payroll pattern
+    more_info R-0042 ask the branch for KYC documents
+    quit
+
+The person is NOTIFIER_USER from the environment, or the login name, recorded as
+decided_by "console:<name>". Tests call handle_line() directly, without a thread.
 """
 import getpass
+import os
 import sys
 import threading
 
+from services.notifier import cards
 from services.notifier.adapters.base import Adapter
 
-ALIASES = {
-    "freeze": "freeze",
-    "dismiss": "dismiss",
-    "more_info": "more_info",
-    "more-info": "more_info",
-    "more": "more_info",
-}
-
-WIDTH = 72
+COMMANDS = ("freeze", "dismiss", "more_info")
+RULE = "=" * 70
 
 
-def render(card):
-    """A card as plain text."""
-    out = ["=" * WIDTH, card["title"] + "  (v%s)" % card["version"]]
-    for marker in card["markers"]:
-        out.append(">> " + marker)
-    for note in card["notes"]:
-        out.append("note: " + note)
-    if card["decision"]:
-        out.append("decision: " + card["decision"]["text"])
-        if card["decision"]["note"]:
-            out.append("  note: " + card["decision"]["note"])
-    if card["fields"]:
-        out.append("")
-        for label, value in card["fields"]:
-            out.append("  %-16s %s" % (label + ":", value))
-    for _key, label, text in card["parts"]:
-        out.append("")
-        out.append(label + ":")
-        out.append("  " + text)
-    out.append("")
-    if card["buttons"]:
-        out.append("type: " + " | ".join("%s %s" % (b["decision"], card["ring_id"]) for b in card["buttons"])
-                   + "   (a note may follow)")
-    for line in card["footer"]:
-        out.append("  " + line)
-    out.append("  Dashboard: " + card["dashboard_url"])
-    return "\n".join(out)
+def user_name():
+    name = os.environ.get("NOTIFIER_USER", "").strip()
+    if name:
+        return name
+    try:
+        return getpass.getuser()
+    except Exception:   # no login name in some containers
+        return "unknown"
+
+
+def render(card, ref=""):
+    """A card as readable text (also handy for logs)."""
+    c = card
+    lines = [RULE]
+    head = "%s v%s  |  %s  |  %s accounts  |  %s" % (
+        c["ring_id"], c["version"], c["shape_label"],
+        cards.DASH if c["n_accounts"] is None else c["n_accounts"], cards.money(c["total_usd"]))
+    lines.append(head + (("   [%s]" % ref) if ref else ""))
+    lines.append("XGBoost %s  |  GNN %s" % (cards.score(c["xgb_score"]), cards.score(c["gnn_score"])))
+    for m in c["markers"]:
+        lines.append("  * %s" % m)
+    if c["key_facts"]:
+        lines.append("")
+        for label, value in c["key_facts"]:
+            lines.append("  %-32s %s" % (label + ":", value))
+    if c["reasons"]:
+        lines.append("")
+        lines.append("  Signals: " + "; ".join(c["reasons"]))
+    for label, text in c["summary"]:
+        if text:
+            lines.append("")
+            lines.append("%s:" % label)
+            lines.append("  " + text)
+    lines.append("")
+    foot = "Written by: %s" % c["source_label"]
+    if c["check_note"]:
+        foot += " (%s)" % c["check_note"]
+    if c["written_at"]:
+        foot += " at %s" % c["written_at"]
+    lines.append(foot)
+    if c["dashboard_url"]:
+        lines.append("Dashboard: %s" % c["dashboard_url"])
+    status = c["status"]
+    line = "Status: %s" % status["label"]
+    if status["decision"]:
+        name = cards.who(status)
+        line += (" by %s" % name) if name else " on the dashboard"
+        if status["decided_at"]:
+            line += " at %s" % cards.short_time(status["decided_at"])
+    if status["note"]:
+        line += " - %s" % status["note"]
+    lines.append(line)
+    if c["buttons_enabled"]:
+        lines.append("Type: freeze %s | dismiss %s | more_info %s  [note]" % ((c["ring_id"],) * 3))
+    lines.append(RULE)
+    return "\n".join(lines)
 
 
 class ConsoleAdapter(Adapter):
-    name = "console"
-    can_update = True
-    can_upload = True
+    kind = "console"
 
-    def __init__(self, out=None, lines=None, user=None):
+    def __init__(self, out=None, inp=None):
         self.out = out or sys.stdout
-        self.lines = lines
-        self.user = user or _user()
-        self.callback = None
+        self.inp = inp if inp is not None else sys.stdin
+        self.clicks = None
+        self.quit_event = threading.Event()
         self.thread = None
-        self.posted = 0
-        self._lock = threading.Lock()
+        self.count = 0
+        self.lock = threading.Lock()
 
-    def say(self, text):
-        with self._lock:
+    def _print(self, text):
+        with self.lock:
             print(text, file=self.out, flush=True)
 
+    # --- sending -------------------------------------------------------------
+
     def post(self, card):
-        self.posted += 1
-        self.say(render(card))
-        return {"console": self.posted}
+        self.count += 1
+        ref = "console:%d" % self.count
+        self._print(render(card, ref))
+        return ref
 
-    def update(self, ref, card):
-        self.say("(update to message %s)\n%s" % (ref.get("console", "?"), render(card)))
+    def update(self, message_ref, card):
+        self._print("(update to %s)\n%s" % (message_ref, render(card, message_ref)))
 
-    def upload(self, ref, filename, text):
-        self.say("(case packet %s ready: %d lines; print it with --packet %s)" % (
-            filename, text.count("\n") + 1, filename.split("_")[1] if "_" in filename else ""))
+    def upload(self, message_ref, filename, text):
+        self._print("(attached %s to %s: %d lines)" % (filename, message_ref, len(text.splitlines())))
 
-    def on_click(self, callback):
-        self.callback = callback
-        source = self.lines if self.lines is not None else sys.stdin
-        self.thread = threading.Thread(target=self._read, args=(source,), daemon=True)
+    # --- clicks --------------------------------------------------------------
+
+    def start(self, clicks):
+        self.clicks = clicks
+        self.thread = threading.Thread(target=self._read, daemon=True)
         self.thread.start()
 
-    def _read(self, source):
+    def _read(self):
         try:
-            for line in source:
+            for line in self.inp:
                 self.handle_line(line)
-        except (OSError, ValueError):
-            pass   # stdin closed (compose without a terminal): no clicks, the service keeps posting
+                if self.quit_event.is_set():
+                    return
+        except (OSError, ValueError):   # stdin closed (e.g. under docker without -i)
+            return
 
     def handle_line(self, line):
-        """One typed command -> one click. Returns the callback's result (or None)."""
-        words = (line or "").strip().split(None, 2)
-        if not words:
+        """Parse one command. Returns the click dict it queued, or None."""
+        parts = (line or "").strip().split(None, 2)
+        if not parts:
             return None
-        decision = ALIASES.get(words[0].lower())
-        if not decision or len(words) < 2:
-            self.say("? type: freeze R-0042 | dismiss R-0042 note | more_info R-0042 note")
+        command = parts[0].lower()
+        if command == "quit":
+            self.quit_event.set()
             return None
-        ring_id = words[1].strip().upper()
-        note = words[2] if len(words) > 2 else ""
-        if self.callback is None:
+        if command not in COMMANDS or len(parts) < 2:
+            self._print("commands: freeze|dismiss|more_info <ring_id> [note], or quit")
             return None
-        result = self.callback(ring_id, "", decision, note, "console:" + self.user, "console")
-        self.say(("ok: " if result.get("ok") else "not saved: ") + result.get("message", ""))
-        return result
+        click = {"ring_id": parts[1], "version": "", "decision": command,
+                 "user_id": "console", "user_name": user_name(),
+                 "note": parts[2] if len(parts) > 2 else ""}
+        if self.clicks is not None:
+            self.clicks.put(click)
+        return click
 
-
-def _user():
-    try:
-        return getpass.getuser()
-    except Exception:
-        return "investigator"
+    def stop(self):
+        self.quit_event.set()
