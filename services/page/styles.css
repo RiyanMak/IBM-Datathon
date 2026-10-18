@@ -90,7 +90,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="radio"]:f
 .summary-strip span{color:var(--muted);font-size:13px}
 
 /* Entry page (leadspace) */
-.st-key-entry{padding-top:clamp(16px,11vh,120px)}
+.st-key-entry{padding:0;min-height:calc(100svh - 228px);display:flex;justify-content:center}
 .st-key-entry [data-testid="stHorizontalBlock"]{align-items:center}
 .st-key-entry .display{margin-top:6px}
 .st-key-cta{margin-top:10px}
@@ -104,9 +104,6 @@ body.is-entry .stApp::before{content:"";position:fixed;inset:0;pointer-events:no
   opacity:.35;animation:drift 18s ease-in-out infinite alternate}
 @keyframes drift{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,-14px,0)}}
 body.is-entry .entry-foot strong{transition:none}
-.entry{display:grid;grid-template-columns:minmax(0,5fr) minmax(320px,7fr);gap:48px;align-items:center;min-height:calc(100vh - 220px);padding:12px 0 8px}
-.entry .lede{font-size:1.15rem;max-width:40ch;color:var(--ink)}
-.entry .sub{color:var(--muted);font-size:14px;margin-top:14px;max-width:46ch}
 .hero-flow{width:100%;height:auto;display:block}
 .hero-flow .wire{stroke:var(--border-strong);stroke-width:1.4;fill:none}
 .hero-flow .acct{fill:var(--surface);stroke:var(--border-strong);stroke-width:1.6}
@@ -126,8 +123,7 @@ body.is-entry .entry-foot strong{transition:none}
 .pipeline .stage .n{font-size:12px;font-weight:600;color:var(--accent)}
 .pipeline .stage strong{display:block;font-size:16px;font-weight:500;margin:8px 0 4px}
 .pipeline .stage span{font-size:13px;color:var(--muted);line-height:1.45}
-.chapter{min-height:200px;padding:20px 20px 16px;border:1px solid var(--border);background:var(--surface);transition:border-color 150ms var(--ease),box-shadow 150ms var(--ease)}
-.chapter:hover{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.chapter{min-height:244px;padding:24px 22px;border:0;background:var(--surface)}
 .chapter .n{font-size:12px;font-weight:600;color:var(--accent)}
 .chapter h3{margin:8px 0 6px;font-size:1.2rem!important;padding:0!important;font-weight:500}
 .chapter p{margin:0;color:var(--muted);font-size:14px}
@@ -164,8 +160,7 @@ body.is-entry .entry-foot strong{transition:none}
 .inspector p{margin:4px 0;color:var(--muted);font-size:13px}
 .empty{padding:44px 24px;border:1px solid var(--border);text-align:center;color:var(--muted);background:var(--surface)}
 .empty strong{display:block;color:var(--ink);font-size:1.15rem;font-weight:400;margin-bottom:4px}
-.tile{padding:14px 16px;border:1px solid var(--border);background:var(--surface);height:100%;transition:border-color 150ms var(--ease)}
-.tile:hover{border-color:var(--border-strong)}
+.tile{padding:14px 16px;border:1px solid var(--border);background:var(--surface);height:100%}
 .tile strong{display:block;font-weight:300;font-size:26px;font-variant-numeric:tabular-nums;line-height:1.15}
 .tile .l{font-size:12px;color:var(--muted);margin-bottom:4px}
 .tile .h{font-size:12px;color:var(--faint);margin-top:6px;line-height:1.4}
@@ -182,7 +177,140 @@ html:not([data-mrh-motion]) .reveal{opacity:1;transform:none}
 @keyframes page-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* Responsive */
-@media(max-width:1100px){.block-container{padding:1.5rem 1.25rem 4rem}[data-testid="stHorizontalBlock"]{gap:1.2rem}.entry{grid-template-columns:1fr;gap:24px;min-height:0}.pipeline{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1100px){.block-container{padding:1.5rem 1.25rem 4rem}[data-testid="stHorizontalBlock"]{gap:1.2rem}.pipeline{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:850px){.st-key-utility{top:10px;right:56px}.block-container{padding:3.4rem 1rem 3rem}.st-key-workspace>[data-testid="stHorizontalBlock"]{flex-direction:column}.st-key-workspace>[data-testid="stHorizontalBlock"]>[data-testid="stColumn"]{width:100%!important;flex:1 1 100%!important}.summary-strip{grid-template-columns:1fr}.summary-strip>div{border-right:0;border-bottom:1px solid var(--border)}.summary-strip>div:last-child{border-bottom:0}.steps{grid-template-columns:repeat(2,1fr)}.pipeline{grid-template-columns:1fr}}
 @media(max-width:480px){.casebar{padding:12px}.display{font-size:2.2rem}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}body.is-entry .stApp::before{display:none}.reveal{opacity:1;transform:none}.hero-flow .pulse{display:none}.hero-flow .draw{stroke-dashoffset:0}}
+
+/* A shared rhythm: context, content, then navigation. */
+.casebar{padding:20px 22px;margin:4px 0 22px}
+.casebar .meta{margin-top:8px;line-height:1.6}
+.status-row{gap:12px;padding:0;margin:8px 0 18px;line-height:1.5}
+.chip{min-height:28px;padding:5px 11px;line-height:1.5}
+.st-key-step-navigation{margin-top:32px;padding-top:20px;border-top:1px solid var(--border-strong)}
+.st-key-step-navigation [data-testid="stPageLink"] a{display:flex;align-items:center;min-height:48px;padding:12px 18px;border:1px solid var(--border-strong);color:var(--ink);background:var(--surface)}
+.st-key-step-next [data-testid="stPageLink"] a{justify-content:flex-end;color:var(--accent);border-color:var(--accent)}
+.st-key-step-next [data-testid="stPageLink"] a:hover{background:var(--tint)}
+
+/* Center the leadspace in the available viewport, including shorter laptop screens. */
+
+.st-key-entry .lede{font-size:1.15rem;max-width:40ch;color:var(--ink)}
+.st-key-entry .sub{color:var(--muted);font-size:14px;line-height:1.65;margin:16px 0 4px;max-width:48ch}
+.entry-foot{margin-top:24px;padding:20px 0 0;gap:32px;align-items:center}
+
+/* Queue and preview form one aligned workspace, with a deliberate narrow gutter. */
+.st-key-case-workspace{margin-top:12px}
+.st-key-queue-panel{padding:20px;background:var(--surface);border:1px solid var(--border)}
+.st-key-case-preview{padding:20px 24px 24px;background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--accent)}
+.st-key-case-preview .casebar{background:var(--canvas);margin-bottom:12px}
+.st-key-case-preview .section,.st-key-queue-panel .section{margin:0 0 12px}
+.st-key-case-preview [data-testid="stButton"]{margin-top:16px}
+.st-key-case-preview .reason{padding:12px 16px;margin-bottom:8px}
+.st-key-queue-panel .status-row{gap:8px;margin-bottom:12px}
+
+/* The writing area must read as an input, even inside a white form. */
+[data-testid="stTextArea"] [data-baseweb="textarea"]{background:var(--canvas);border:1px solid var(--border-strong);border-bottom:2px solid var(--muted);border-radius:0}
+[data-testid="stTextArea"] textarea{background:var(--canvas);color:var(--ink);padding:14px 16px;line-height:1.6;caret-color:var(--accent)}
+[data-testid="stTextArea"] textarea::placeholder{color:var(--muted);opacity:1}
+[data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+[data-testid="stTextArea"] label{margin-bottom:8px}
+
+/* Diagnostics: one grid controls both rows, so help text never misaligns tiles. */
+.status-overview{padding:16px 0;margin:4px 0 16px;border-bottom:1px solid var(--border)}
+.status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:16px}
+.status-grid .tile{padding:22px 24px;min-height:164px;display:flex;flex-direction:column}
+.status-grid .tile .l{font-size:13px;margin-bottom:12px}
+.status-grid .tile strong{font-size:32px;margin-bottom:16px}
+.status-grid .tile .h{color:var(--muted);margin-top:auto;max-width:52ch;line-height:1.55}
+
+/* Informational cards stay quiet; only the explicit Open links are interactive. */
+.st-key-about-pipeline{margin-top:16px}
+.st-key-about-chapters,.st-key-about-boundaries{margin-top:32px}
+.st-key-about-pipeline .section,.st-key-about-chapters .section,.st-key-about-boundaries .section{margin-bottom:16px}
+[class*="st-key-chapter-"]{background:var(--surface);border:1px solid var(--border);gap:0!important;height:100%}
+.chapter h3{margin:16px 0 12px;line-height:1.3}
+.chapter p{line-height:1.6}
+.chapter .q{margin-top:20px;line-height:1.5;color:var(--muted)}
+[class*="st-key-chapter-"] [data-testid="stPageLink"]{border-top:1px solid var(--border)}
+[class*="st-key-chapter-"] [data-testid="stPageLink"] a{min-height:48px;padding:12px 22px;color:var(--accent)}
+[class*="st-key-chapter-"] [data-testid="stPageLink"] a:hover{background:var(--tint)}
+.boundaries{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--border-strong)}
+.boundary{display:flex;gap:20px;padding:24px 24px 24px 0;border-bottom:1px solid var(--border)}
+.boundary:nth-child(even){padding-left:24px;border-left:1px solid var(--border)}
+.boundary .n{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);padding-top:4px}
+.boundary h3{font-size:16px!important;font-weight:500;margin:0 0 8px;padding:0!important}
+.boundary p{font-size:14px;line-height:1.6;color:var(--muted);margin:0;max-width:58ch}
+
+/* In-place palette ownership extends to native Streamlit widgets and popup surfaces.
+   This avoids a full browser reload just to change Emotion's initial theme. */
+.theme-state{display:none}
+body,[data-testid="stAppViewContainer"],header[data-testid="stHeader"]{color:var(--ink);background-color:var(--canvas)}
+[data-testid="stAppViewContainer"]{background:transparent}
+.stApp,header[data-testid="stHeader"],.casebar,.tile,.chapter,.boundary,.st-key-case-preview,.st-key-queue-panel,
+[data-testid="stForm"],[data-baseweb="input"],[data-baseweb="textarea"],textarea{transition:background-color 180ms ease,color 180ms ease,border-color 180ms ease}
+[data-testid="stMarkdownContainer"],[data-testid="stWidgetLabel"],[data-testid="stMetric"],label,[data-testid="stMetricValue"],header nav a{color:var(--ink)}
+[data-testid="stCaptionContainer"],[data-testid="stMetricLabel"],[data-testid="stCaptionContainer"] p{color:var(--muted)}
+[data-testid="stTextInput"] [data-baseweb="input"],[data-baseweb="base-input"],[data-baseweb="select"]>div,
+[data-baseweb="popover"]>div,[data-baseweb="menu"],[role="listbox"],[data-testid="stPopoverBody"],
+[data-testid="stExpander"], [data-testid="stCode"]{background-color:var(--surface);color:var(--ink);border-color:var(--border-strong)}
+input,textarea,[data-baseweb="select"] input{color:var(--ink)!important;caret-color:var(--accent)}
+input::placeholder{color:var(--muted)!important;opacity:1}
+button[kind="secondary"],button[kind="secondaryFormSubmit"],button[kind="tertiary"]{background:var(--surface);color:var(--ink);border-color:var(--border-strong)}
+[data-testid="stPageLink"] a{color:var(--ink)}
+[data-baseweb="popover"] li{color:var(--ink);background:var(--surface)}
+[data-baseweb="popover"] li:hover{background:var(--surface-2)}
+[data-testid="stExpander"] summary:hover{color:var(--accent)}
+[data-testid="stRadio"] label{color:var(--ink)}
+
+@media(max-width:1100px){
+  .st-key-case-preview,.st-key-queue-panel{padding:16px}
+  .chapter{padding:20px 16px;min-height:280px}
+}
+@media(max-width:850px){
+  .st-key-entry{min-height:calc(100svh - 240px)}
+  .st-key-case-workspace>[data-testid="stHorizontalBlock"]{flex-direction:column}
+  .st-key-case-workspace>[data-testid="stHorizontalBlock"]>[data-testid="stColumn"]{width:100%!important;flex:1 1 100%!important}
+  .status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .st-key-about-chapters [data-testid="stHorizontalBlock"]{flex-wrap:wrap}
+  .st-key-about-chapters [data-testid="stColumn"]{min-width:calc(50% - 1rem)}
+  .chapter{min-height:220px}
+}
+@media(max-width:640px){
+  .st-key-entry{min-height:0;padding:32px 0 20px}
+  .entry-foot{gap:20px}
+  .status-grid,.boundaries{grid-template-columns:1fr}
+  .boundary:nth-child(even){padding-left:0;border-left:0}
+  .st-key-step-navigation [data-testid="stHorizontalBlock"]{flex-wrap:nowrap;gap:12px}
+  .st-key-step-navigation [data-testid="stColumn"]{min-width:0;width:calc(50% - 6px)!important;flex:1 1 0!important}
+  .st-key-step-navigation [data-testid="stPageLink"] a{padding:12px 10px}
+  .st-key-about-chapters [data-testid="stColumn"]{min-width:100%}
+  .chapter{min-height:0}
+}
+.st-key-entry [data-testid="stMarkdownContainer"] h1.display{display:block;font-size:clamp(2.6rem,5.2vw,4.5rem);font-weight:300;line-height:1.08;padding:0;margin:12px 0 24px}
+.st-key-entry h1.display em{display:inline-block;margin-left:.16em}
+.st-key-queue [data-testid="stRadio"],.st-key-queue [role="radiogroup"],.st-key-queue [data-baseweb="radio"]{width:100%}
+button[kind="primary"] [data-testid="stMarkdownContainer"],button[kind="primaryFormSubmit"] [data-testid="stMarkdownContainer"]{color:var(--accent-ink)}
+[data-testid="stPageLink"] a [data-testid="stMarkdownContainer"]{color:inherit}
+.st-key-queue-panel [data-testid="stTextInput"] [data-baseweb="input"]{background:var(--canvas);border:1px solid var(--border-strong)}
+/* Native React Aria controls (Streamlit 1.66+); Base Web selectors above support older installs. */
+[data-testid="stTextInputRootElement"],
+[data-testid="stTextAreaRootElement"],
+[data-testid="stSelectbox"] div:has(>input[role="combobox"]){background:var(--canvas);color:var(--ink);border:1px solid var(--border-strong);border-radius:0}
+[data-testid="stTextInputRootElement"]:focus-within,
+[data-testid="stTextAreaRootElement"]:focus-within,
+[data-testid="stSelectbox"] div:has(>input[role="combobox"]):focus-within{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+[data-testid="stTextAreaRootElement"]{border-bottom:2px solid var(--muted)}
+[data-testid="stTextInputField"],[data-testid="stSelectbox"] input{background:transparent}
+[data-testid="stSelectbox"] button{color:var(--ink)}
+[data-testid="stSelectboxVirtualDropdown"],[data-testid="stSelectboxVirtualDropdown"] [role="option"]{background:var(--surface);color:var(--ink);border-color:var(--border-strong)}
+[data-testid="stSelectboxVirtualDropdown"] [role="option"][data-focused] [data-item-hl]{background:var(--surface-2)}
+.st-key-queue [data-testid="stMarkdownContainer"] p{color:inherit}
+.st-key-queue [data-testid="stCaptionContainer"],.st-key-queue [data-testid="stCaptionContainer"] p{color:var(--muted)}
+[data-testid="stPageLink"] a span{color:inherit!important}
+[data-testid="stMultiSelect"] div:has(>[data-testid="stMultiSelectTagsContainer"]){background:var(--canvas);color:var(--ink);border:1px solid var(--border-strong)}
+[data-testid="stMultiSelect"] input{background:transparent}
+[data-testid="stMultiSelect"] button{color:var(--ink)}
+[data-testid="stMultiSelect"] [data-tag]{background:var(--surface-2);color:var(--ink)}
+[data-testid="stMultiSelectDropdown"],[data-testid="stMultiSelectDropdown"] [role="option"]{background:var(--surface);color:var(--ink);border-color:var(--border-strong)}
+[data-testid="stMultiSelectDropdown"] [role="option"][data-focused] [data-item-hl]{background:var(--surface-2)}
+[data-testid="stTooltipIcon"] .stTooltipHoverTarget svg.icon{stroke:var(--muted);color:var(--muted)}

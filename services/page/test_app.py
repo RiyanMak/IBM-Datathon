@@ -87,6 +87,26 @@ def test_theme_toggle_is_offered(r):
     assert any(t.key == "theme-toggle" for t in at.toggle)
 
 
+def test_theme_change_keeps_reviewed_case_and_note(r, monkeypatch):
+    from services.page import decisions
+
+    def unavailable(*args, **kwargs):
+        raise ConnectionError("unavailable")
+
+    monkeypatch.setattr(decisions, "write", unavailable)
+    add_ring(r, version=3)
+    at = run("decide")
+    at.text_area[0].input("Follow up on the outgoing transfer")
+    next(b for b in at.button if b.label == "Request more information").click().run()
+    for dark in (True, False):
+        at.toggle(key="theme-toggle").set_value(dark).run()
+        assert not at.exception
+        assert at.text_area[0].value == "Follow up on the outgoing transfer"
+        assert at.session_state["reviewed_ring"].version == 3
+        assert "R-1" in case_title(at)
+    assert r.xlen(bus.DECISIONS) == 0
+
+
 def test_redis_down_shows_banner(monkeypatch):
     import redis
     import streamlit as st

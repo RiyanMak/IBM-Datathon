@@ -1,5 +1,6 @@
 """Shared Streamlit helpers for every view: snapshot access, theme, HTML blocks, motion,
 case context and the step rail. Only app.py, this module and views/ import Streamlit."""
+import json
 import time
 from dataclasses import replace
 from html import escape
@@ -16,14 +17,13 @@ from services.page import fmt, state, workspace as ws
 HERE = Path(__file__).resolve().parent
 REFRESH_S = 2
 SORTS = {"Highest score": "score", "Newest data": "newest"}
-DARK_TOKENS = (":root{--canvas:#161616;--surface:#262626;--surface-2:#393939;--ink:#f4f4f4;--muted:#c6c6c6;"
+DARK_TOKENS = (':root[data-mrh-theme="dark"],:root:not([data-mrh-theme]):has(.theme-state[data-theme="dark"]){--canvas:#161616;--surface:#262626;--surface-2:#393939;--ink:#f4f4f4;--muted:#c6c6c6;'
                "--faint:#8d8d8d;--border:#393939;--border-strong:#525252;--accent:#4589ff;--accent-ink:#161616;"
                "--accent-strong:#78a9ff;--tint:#001d6c;--review:#f1c21b;--review-bg:#2d2500;--origin:#ff832b;--origin-fill:#ff832b;"
                "--origin-bg:#3a1e00;--ok:#42be65;--ok-bg:#0a2f16;--focus:#ffffff;--grid:rgba(244,244,244,.06)}")
 # Streamlit keys the stored choice by page path ("stActiveTheme-<pathname>-v2"), so the switch
 # writes every page's key; otherwise the choice would apply to one page only.
 THEME_STORE_KEY = "stActiveTheme-%s-v2"
-THEME_STORE_VALUES = {"light": '"Light"', "dark": '"Dark"'}
 
 PAGES = {
     "home": ("views/home.py", "Start"),
@@ -73,8 +73,9 @@ def is_dark_color(hex_color):
 
 
 def theme():
-    """'dark' only when the active variant really draws a dark canvas. The repository config
-    pins both variants to the light palette, so this is 'light' unless that config is removed."""
+    """Use the session choice immediately, then the browser's theme on first load."""
+    if "theme-toggle" in st.session_state:
+        return "dark" if st.session_state["theme-toggle"] else "light"
     try:
         variant = st.context.theme.type
     except AttributeError:
@@ -105,10 +106,8 @@ def reveal(inner_html, delay=0):
 def page_frame():
     """Stylesheet, brand mark, theme switch and the motion script. Called once per run from app.py."""
     active = theme()
-    css = (HERE / "styles.css").read_text()
-    if active == "dark":
-        css += DARK_TOKENS
-    html("<style>" + css + "</style>")
+    css = (HERE / "styles.css").read_text() + DARK_TOKENS
+    html('<style>' + css + '</style><span class="theme-state" data-theme="%s" aria-hidden="true"></span>' % active)
     mark = "wordmark-dark.svg" if active == "dark" else "wordmark.svg"
     st.logo(str(HERE / "assets" / mark), icon_image=str(HERE / "assets" / "mark.svg"), size="large")
     with st.container(key="motion"):
@@ -119,18 +118,16 @@ def page_frame():
 
 
 def theme_switch(active):
-    """A sun/moon toggle pinned to the header. It stores the other theme the way Streamlit's own
-    menu does, then reloads; styles.css positions the container top right."""
+    """Update the palette in place; persist the preference without reloading the session."""
     with st.container(key="utility", horizontal=True, horizontal_alignment="right"):
         dark = st.toggle(":material/dark_mode:" if active == "dark" else ":material/light_mode:",
                          value=active == "dark", key="theme-toggle",
                          help="Switch between light and dark mode")
-    wanted = "dark" if dark else "light"
-    if wanted != active:
-        keys = [THEME_STORE_KEY % path for path in theme_store_paths()]
-        with st.container(key="themeio"):
-            st.iframe("<script>try{var s=window.parent.localStorage;%s;window.parent.location.reload();}catch(e){}</script>"
-                      % ";".join("s.setItem(%r,%r)" % (key, THEME_STORE_VALUES[wanted]) for key in keys), height=1)
+    keys = [THEME_STORE_KEY % path for path in theme_store_paths()]
+    script = (HERE / "theme.js").read_text().replace("__THEME_KEYS__", json.dumps(keys))
+    script = script.replace("__ACTIVE_THEME__", json.dumps("dark" if dark else "light"))
+    with st.container(key="themeio"):
+        st.iframe("<script>" + script + "</script>", height=1)
 
 
 def theme_store_paths():
@@ -212,11 +209,14 @@ def no_case(message="Choose a case to inspect its transfers and evidence."):
 
 
 def step_links(previous=None, next_step=None):
-    cols = st.columns([1, 1, 2])
-    if previous:
-        cols[0].page_link(PAGES[previous][0], label="Back · " + PAGES[previous][1], icon=":material/arrow_back:")
-    if next_step:
-        cols[1].page_link(PAGES[next_step][0], label="Next · " + PAGES[next_step][1], icon=":material/arrow_forward:")
+    with st.container(key="step-navigation"):
+        left, right = st.columns(2, gap="medium")
+        if previous:
+            with left.container(key="step-back"):
+                st.page_link(PAGES[previous][0], label="Back · " + PAGES[previous][1], icon=":material/arrow_back:", width="stretch")
+        if next_step:
+            with right.container(key="step-next"):
+                st.page_link(PAGES[next_step][0], label="Next · " + PAGES[next_step][1], icon=":material/arrow_forward:", width="stretch")
 
 
 def read_age(snap):

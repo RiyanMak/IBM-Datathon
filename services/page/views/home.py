@@ -53,7 +53,7 @@ with left:
             '<p class="sub">Replayed transactions are scored, linked into candidate rings and explained. '
             'Choose a case, follow the money, weigh the evidence and record a decision.</p>')
     with st.container(key="cta", horizontal=True):
-        if st.button("Start investigating", icon=":material/arrow_forward:", key="enter"):
+        if st.button("Start investigating", type="primary", icon=":material/arrow_forward:", key="enter"):
             st.switch_page(ui.PAGES["cases"][0])
         st.page_link(ui.PAGES["about"][0], label="How it works", icon=":material/arrow_forward:")
 with right:

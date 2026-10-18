@@ -73,8 +73,8 @@ the case context bar keep the selected case consistent across pages.
 Visual language follows IBM Carbon: IBM Plex Sans, square corners, hairline grids, flat tiles,
 Blue 60 as the single interactive colour, Gray 10 (light) and Gray 100 (dark) themes defined in
 `.streamlit/config.toml`. The sun/moon toggle in the header stores the choice the way Streamlit's
-own settings menu does (one local-storage key per page path) and reloads; the page tokens and
-the graph follow. **Play flow** in the graph toolbar replays the drawn transfers in dataset-time
+own settings menu does (one local-storage key per page path) without reloading the page; the palette updates in place, and
+the graph follows the session choice. Unsaved notes and the reviewed case stay in place. **Play flow** in the graph toolbar replays the drawn transfers in dataset-time
 order with a traveling pulse, so a case can be watched end to end without selecting nodes. Motion is
 limited to reveal-on-scroll on How it works, a short page transition, and state transitions,
 all disabled under `prefers-reduced-motion`.

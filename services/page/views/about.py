@@ -34,17 +34,26 @@ def chapters():
     cols = st.columns(4, gap="medium")
     for n, (key, number, title, text, question) in enumerate(CHAPTERS):
         with cols[n]:
-            ui.reveal('<div class="chapter"><div class="n">%s</div><h3>%s</h3><p>%s</p><span class="q">%s</span></div>' % (
-                number, escape(title), escape(text), escape(question)), delay=n)
-            st.page_link(ui.PAGES[key][0], label="Open", icon=":material/arrow_forward:")
+            with st.container(key="chapter-" + key):
+                ui.reveal('<div class="chapter"><div class="n">%s</div><h3>%s</h3><p>%s</p><span class="q">%s</span></div>' % (
+                    number, escape(title), escape(text), escape(question)), delay=n)
+                st.page_link(ui.PAGES[key][0], label="Open " + ui.PAGES[key][1], icon=":material/arrow_forward:", width="stretch")
 
 
 st.markdown("## How It Works")
 st.caption("Transaction replay → suspicious-payment scoring → connected-account investigation → evidence-based explanation → human decision.")
-pipeline()
-chapters()
-ui.section("Boundaries")
-st.markdown("- Transactions are synthetic IBM AML data replayed as a simulation; dataset time is historical.\n"
-            "- Scores rank suspicion on a 0–1 scale and are not calibrated probabilities of wrongdoing.\n"
-            "- Account roles in the graph are inferred from the case's transfers, not dataset facts.\n"
-            "- Decisions are audit records. They do not freeze bank accounts.")
+with st.container(key="about-pipeline"):
+    pipeline()
+with st.container(key="about-chapters"):
+    chapters()
+with st.container(key="about-boundaries"):
+    ui.section("Boundaries")
+    boundaries = [
+        ("01", "Simulated data", "Synthetic IBM AML transactions, replayed in historical dataset time."),
+        ("02", "Scores guide attention", "A 0–1 ranking of suspicion, not a calibrated probability of wrongdoing."),
+        ("03", "Roles are inferred", "Origin and recipient roles come from the case’s transfers, not dataset facts."),
+        ("04", "People decide", "Decisions create audit records. They do not freeze bank accounts."),
+    ]
+    ui.html('<div class="boundaries">' + ''.join(
+        '<div class="boundary"><span class="n">%s</span><div><h3>%s</h3><p>%s</p></div></div>' %
+        (n, escape(title), escape(text)) for n, title, text in boundaries) + '</div>')

@@ -11,8 +11,8 @@ from services.page.models import shape_label
 def queue():
     snap, ss = ui.current_snapshot(), st.session_state
     ui.html('<div class="status-row"><span class="chip">%s</span>%s</div>' % (escape(ui.mode_label(snap)), ui.status_chip(snap)))
-    f1, f2, f3 = st.columns([2, 1, 1], vertical_alignment="bottom")
-    f1.text_input("Find a case or account", key="search", placeholder="Case ID or account…")
+    st.text_input("Find a case or account", key="search", placeholder="Case ID or account…")
+    f2, f3 = st.columns(2, vertical_alignment="bottom")
     with f2.popover("Filter cases", width="stretch"):
         st.toggle("Awaiting a decision", key="open_only")
         shapes = sorted({r.shape for r in snap.rings} | set(ss.get("shapes", [])))
@@ -64,7 +64,7 @@ def queue():
                         + "  \n" + fmt.md(ring.reasons[0] if ring.reasons else "Flag reason not supplied"))
     with st.container(key="queue"):
         choice = st.radio("Select a case", order, key="case_choice",
-                          label_visibility="collapsed", captions=captions,
+                          label_visibility="collapsed", captions=captions, width="stretch",
                           format_func=lambda rid: fmt.md("%s · %s" % (rid, by_id[rid].shape_label)))
     if choice != ui.selected_id():
         ss["selected"] = choice
@@ -77,7 +77,6 @@ def preview():
     if not ring:
         ui.html('<div class="empty"><strong>Nothing selected yet.</strong><p>Pick a case from the queue to preview it here.</p></div>')
         return
-    ui.section("Selected case")
     ui.case_bar(ring, snap)
     st.markdown(fmt.md(ws.flow_description(ring)))
     st.markdown("**Why it was flagged**")
@@ -93,8 +92,13 @@ ui.step_rail("cases")
 ui.section("Choose a case", "01")
 st.markdown("## Review queue")
 st.caption("Cases are ranked by model score. The order holds while you review; new arrivals wait for **Update queue**.")
-left, right = st.columns([1.15, 1], gap="large")
-with left:
-    queue()
-with right:
-    preview()
+with st.container(key="case-workspace"):
+    left, right = st.columns([1, 1.45], gap="medium")
+    with left:
+        with st.container(key="queue-panel"):
+            ui.section("Case queue")
+            queue()
+    with right:
+        with st.container(key="case-preview"):
+            ui.section("Selected case")
+            preview()

@@ -11,7 +11,7 @@ from services.page import fmt, state, ui
 def diagnostics():
     snap = ui.current_snapshot()
     known = snap.redis_ok or "last_good_snapshot" in st.session_state
-    ui.html('<div class="status-row"><span class="chip">%s</span>%s</div>' % (escape(ui.mode_label(snap)), ui.status_chip(snap)))
+    ui.html('<div class="status-row status-overview"><span class="chip">%s</span>%s</div>' % (escape(ui.mode_label(snap)), ui.status_chip(snap)))
     if not snap.redis_ok:
         st.warning("Connection unavailable. Your notes are kept. Decisions require a connection.")
         if st.button("Retry connection"):
@@ -30,11 +30,10 @@ def diagnostics():
                (state.RINGS_WINDOW, state.CASES_WINDOW))
     ui.section("Pipeline counters")
     tiles = fmt.top_bar(snap.counters)
-    cols = st.columns(3)
-    for n, tile in enumerate(tiles):
-        with cols[n % 3]:
-            ui.html('<div class="tile"><div class="l">%s</div><strong>%s</strong><div class="h">%s</div></div>' % (
-                escape(tile.label), escape(tile.value if known else fmt.DASH), escape(tile.help)))
+    ui.html('<div class="status-grid">' + ''.join(
+        '<div class="tile"><div class="l">%s</div><strong>%s</strong><div class="h">%s</div></div>' % (
+            escape(tile.label), escape(tile.value if known else fmt.DASH), escape(tile.help))
+        for tile in tiles) + '</div>')
     if snap.skipped:
         st.warning(fmt.md("Malformed messages skipped: " + str(snap.skipped)))
 
