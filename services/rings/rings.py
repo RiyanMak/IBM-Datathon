@@ -348,11 +348,16 @@ def top_reasons(edges, k=MAX_REASONS) -> list:
     return [phrase for phrase, _ in counts.most_common(k)]
 
 
-def ring_fields(ring: Ring, edges) -> dict:
-    """The `rings` message, all values text, exactly what the case writer and page parse."""
+def ring_fields(ring: Ring, edges, published_at: str = "") -> dict:
+    """The `rings` message, all values text, exactly what the case writer and page parse.
+
+    published_at (extra field, data time) is when the ring service saw the group:
+    the evaluation uses it for "minutes from an attempt's first transfer to its ring".
+    """
     edges = sorted(edges, key=lambda e: (e.ts_min, int(e.txn_id)))
     accounts = sorted(ring.accounts)
     return {
+        "published_at": published_at,
         "ring_id": ring.ring_id,
         "version": str(ring.version),
         "shape": ring.shape,
@@ -440,7 +445,7 @@ class RingService:
                 ring.accounts = set(group)
                 ring.txn_ids = txn_ids
                 ring.shape = name_shape(group, group_edges)
-                published.append(ring_fields(ring, group_edges))
+                published.append(ring_fields(ring, group_edges, self.data_time()))
                 self.stats["published"] += 1
 
         for ring_id in [rid for rid, r in self.rings.items()
