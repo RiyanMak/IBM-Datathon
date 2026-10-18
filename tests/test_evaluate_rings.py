@@ -140,3 +140,51 @@ def test_rings_file_and_missing_published_at_fall_back_to_last_seen(tmp_path):
     path.write_text(json.dumps(m) + "\n\n")
     rings = rings_from_file(path)
     assert rings[0]["published_at"] == datetime(2022, 9, 9, 22, 30) and rings[0]["shape"] == "cycle"
+
+
+def test_markdown_report_from_a_hand_made_summary():
+    from scripts.evaluate_rings import markdown_report
+    attempts = {"attempts_in_period": 10, "caught": 6, "caught_share": 0.6, "covered": 7,
+                "shape_matched": 3, "shape_match_share": 0.5, "shape_matched_final": 5,
+                "shape_match_final_share": 5 / 6, "minutes_to_alert_median": 22.0, "minutes_to_alert_mean": 30.5,
+                "still_stoppable_median": 0.48, "still_stoppable_mean": 0.4, "rings_total": 12,
+                "rings_matching_an_attempt": 6,
+                "per_shape": {"cycle": {"attempts": 4, "caught": 2, "shape_matched": 1, "shape_matched_final": 2}}}
+    labels = {"rings": 12, "transfers_in_rings": 100, "laundering_in_rings": 74, "ring_transfer_precision": 0.74,
+              "rings_mostly_laundering": 9, "rings_without_laundering": 2, "laundering_in_period": 150,
+              "laundering_covered": 80, "laundering_covered_share": 80 / 150, "core_precision": None,
+              "expanded_precision": None, "expanded_transfers": 0,
+              "per_shape": {"cycle": {"rings": 3, "mean_precision": 0.56}}}
+    sweep = [{"gnn_threshold": None, "ring_versions": 20, "rings": 12},
+             {"gnn_threshold": 0.5, "ring_versions": 15, "rings": 9}]
+    text = markdown_report({"attempts": attempts, "labels": labels, "gnn_sweep": sweep},
+                           {"patterns": "p.txt", "since": "2022-09-08T16:12:00", "until": None})
+    assert text.startswith("# Ring-level evaluation")
+    assert "| patterns | `p.txt` |" in text and "until" not in text
+    for line in ("| Known attempts starting in the period | 10 |", "| Caught by a ring | 6 (60%) |",
+                 "| Covered (half the attempt's accounts in one ring) | 7 |",
+                 "| Shape match rate at the first alert, among caught | 50% |",
+                 "| Median minutes from first transfer to alert | 22 |",
+                 "| Median share of the money still stoppable at the alert | 48% |",
+                 "| Rings (latest versions) | 12 |", "| no GNN | 12 |", "| 0.50 | 9 |"):
+        assert line in text
+    only_labels = markdown_report({"labels": labels})
+    assert "Headline numbers" not in only_labels and "GNN sweep" not in only_labels
+    assert "No results" in markdown_report({})
+
+
+def test_markdown_flag_writes_the_report_and_keeps_the_printed_output(tmp_path, capsys):
+    from scripts.evaluate_rings import main
+    path = tmp_path / "patterns.txt"
+    path.write_text(PATTERNS)
+    rings_file = tmp_path / "rings.jsonl"
+    rings_file.write_text(json.dumps(ring("R-0001", 1, "scatter-gather", ["10_M0000001", "27_P0000001",
+                                          "27_P0000002", "27_P0000003", "27_B0000001"], "2022-09-09T12:30:00")) + "\n")
+    args = ["--patterns", str(path), "--rings-file", str(rings_file), "--since", "2022-09-08T16:12:00"]
+    main(args)
+    printed = capsys.readouterr().out
+    md = tmp_path / "evaluation.md"
+    main(args + ["--markdown", str(md)])
+    assert capsys.readouterr().out == printed
+    text = md.read_text()
+    assert "| Known attempts starting in the period | 2 |" in text and "| ring versions read | `1` |" in text
