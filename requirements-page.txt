@@ -1,0 +1,6 @@
+# Laptop-only page setup; the full LinuxONE stack still uses requirements.txt.
+streamlit>=1.50,<2
+redis>=5,<9
+requests>=2.31,<3
+pytest>=8,<10
+fakeredis>=2.30,<3

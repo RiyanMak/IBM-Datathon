@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Case money flow</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="toolbar" aria-label="Graph controls">
+    <div class="legend">
+      <span><i class="key origin"></i> Origin · first sender</span>
+      <span><i class="key"></i> Account</span>
+      <span><i class="key end"></i> Final recipient</span>
+      <span><i class="key arrow">→</i> Transfer</span>
+      <span><i class="key selected"></i> Selected</span>
+    </div>
+    <div><button id="play" class="play" aria-pressed="false">▶ Play flow</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="fit">Fit view</button></div>
+  </div>
+  <div id="viewport"><svg id="graph" role="group" aria-label="Money flow. Select an account or transfer to inspect it. Use the inspection list below as an alternative."></svg></div>
+  <div class="footer"><span id="scope"></span><span>Arrows show transfer direction · roles are inferred from this case</span></div>
+  <script src="main.js"></script>
+</body>
+</html>

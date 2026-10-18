@@ -5,6 +5,8 @@ plus version, an extra field so the audit trail says which version of the ring
 the person saw. Readers that only know the guide's four fields can ignore it.
 """
 from datetime import datetime, timezone
+import hashlib
+import json
 
 from common import bus
 from services.page.models import DECISIONS
@@ -37,6 +39,34 @@ def build(ring_id: str, version, decision: str, note: str = "", now=None) -> dic
     }
 
 
-def write(r, ring_id: str, version, decision: str, note: str = "") -> str:
-    """Append one decision. Returns the Redis message ID."""
-    return r.xadd(bus.DECISIONS, build(ring_id, version, decision, note))
+def write(r, ring_id: str, version, decision: str, note: str = "", request_id=None) -> str:
+    """Append a decision. Optional idempotency protects retries after a lost ACK.
+
+    The original stream fields stay intact. A short-lived side key and XADD are
+    committed together, so a connection failure cannot create duplicate retries.
+    Reusing a request with a different payload is rejected instead of reporting a
+    different decision as saved.
+    """
+    fields = build(ring_id, version, decision, note)
+    if not request_id:
+        return r.xadd(bus.DECISIONS, fields)
+    from redis.exceptions import WatchError
+    digest = hashlib.sha256(str(request_id).encode()).hexdigest()
+    key = "page:decision-request:" + digest
+    payload = json.dumps({k: v for k, v in fields.items() if k != "decided_at"}, sort_keys=True)
+    for _ in range(3):
+        with r.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                previous = pipe.get(key)
+                if previous is not None:
+                    if previous != payload:
+                        raise DecisionError("This pending request has different content. Retry the original decision first.")
+                    return "already-recorded"
+                pipe.multi()
+                pipe.set(key, payload, ex=86400)
+                pipe.xadd(bus.DECISIONS, fields)
+                return pipe.execute()[1]
+            except WatchError:
+                continue
+    raise DecisionError("Another submission is in progress. Retry this decision.")

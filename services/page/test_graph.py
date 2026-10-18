@@ -50,7 +50,7 @@ def test_roles_from_facts_are_highlighted_and_written():
     ring = make_ring([e("O", "K", 1000), e("K", "C", 950)])
     pic = graph.build(ring, facts={"key_account": "K", "origin": "O", "collector": "C"})
     assert pic.roles == {"K": "key_account", "O": "origin", "C": "collector"}
-    assert "Key account (possible victim)" in pic.dot and "Collector" in pic.dot
+    assert "Key account (inferred)" in pic.dot and "Collector" in pic.dot
     assert graph.THEMES["light"]["roles"]["key_account"] in pic.dot
 
 

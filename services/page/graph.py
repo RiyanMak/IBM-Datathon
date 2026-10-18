@@ -24,9 +24,9 @@ MAX_SIZE_IN = "10,6.5"   # Graphviz shrinks a bigger picture to fit (inches at 7
 
 ROLE_ORDER = ("key_account", "origin", "collector")   # fixed slot order, never cycled
 ROLE_TEXT = {
-    "key_account": "Key account (possible victim)",
-    "origin": "Origin",
-    "collector": "Collector",
+    "key_account": "Key account (inferred)",
+    "origin": "Origin (inferred)",
+    "collector": "Collector (inferred)",
 }
 
 THEMES = {

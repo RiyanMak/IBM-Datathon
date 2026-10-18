@@ -1,0 +1,35 @@
+# Two deliberate themes modelled on IBM Carbon: Gray 10 (light) and Gray 100 (dark).
+# The page's own tokens (styles.css / ui.DARK_TOKENS) follow whichever one is active.
+[theme]
+base = "light"
+primaryColor = "#0F62FE"
+backgroundColor = "#F4F4F4"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#161616"
+linkColor = "#0F62FE"
+borderColor = "#E0E0E0"
+baseRadius = "none"
+buttonRadius = "none"
+font = "IBM Plex Sans, system-ui, sans-serif"
+headingFont = "IBM Plex Sans, system-ui, sans-serif"
+codeFont = "IBM Plex Mono, Menlo, monospace"
+showSidebarBorder = false
+
+[theme.dark]
+primaryColor = "#4589FF"
+backgroundColor = "#161616"
+secondaryBackgroundColor = "#262626"
+textColor = "#F4F4F4"
+linkColor = "#78A9FF"
+borderColor = "#393939"
+baseRadius = "none"
+buttonRadius = "none"
+font = "IBM Plex Sans, system-ui, sans-serif"
+headingFont = "IBM Plex Sans, system-ui, sans-serif"
+codeFont = "IBM Plex Mono, Menlo, monospace"
+
+[client]
+toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false
