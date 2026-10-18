@@ -22,6 +22,8 @@ ssh -L 8501:localhost:8501 linux1@<vm-ip>         # from your laptop, then open 
 
 Tests, GNN training and the ring evaluation also run on the VM inside the same image, for example `docker compose run --rm --no-deps scorer python -m pytest -q`; the full list is in `docs/next-steps.md`, section 5c.
 
+The reviewer bot (`services/notifier/`, below) is the seventh container; it also writes the case packet, a Markdown report per ring. `docs/demo-runbook.md` lists the commands, expected output and screenshots for the demo evidence: containers, latency, scale-out, kill and recover, replayer resume, stream cap, Telum, decisions audit, security and evaluation.
+
 ## Data cleaning
 
 The cleaning pipeline turns `HI-Small_Trans.csv` into one typed, time-sorted table and a few reports. It never edits the raw file and never auto-fixes data: if something breaks the data contract, the run stops with exit code 1 and explains why in `data_quality.md`.
@@ -88,6 +90,33 @@ python -m services.casewriter.main
 
 Redis host and stream names for every service come from `common/bus.py` (`REDIS_HOST`, default `redis` inside compose). Watsonx settings come from `.env` (copy `.env.example`). `data/processed/fx_rates.json` from the cleaning run is the team's only exchange-rate table; `patterns_to_rings.py` reads it so test rings and the scorer agree on every dollar amount.
 
+## Reviewer bot (Slack)
+
+Posts each case from the `cases` stream to a chat channel as a card: ring, shape, scores, key facts, the five-part summary and who wrote it (Granite fact-checked or the template), with three buttons. A click writes to the `decisions` stream, the same stream the investigator page reads, so a decision made in Slack shows on the page as a badge. Slack runs in Socket Mode (an outbound websocket): no public URL and no inbound port. Lives in `services/notifier/`, see its README for the Slack app setup (two tokens and a channel ID in `.env`).
+
+```bash
+# no network, no tokens: cards as text, decisions typed on stdin (freeze R-0001 note...)
+python -m services.notifier.main --console
+
+# the service in compose (NOTIFIER_ADAPTER=slack in .env for Slack, console otherwise)
+docker compose up -d notifier
+
+# the case packet for one ring (Markdown; the Slack card attaches the same file)
+python -m services.notifier.main --packet R-0001
+```
+
+| Button | `decision` written |
+|---|---|
+| Freeze accounts | `freeze` |
+| Dismiss | `dismiss` |
+| Needs more info | `more_info` (opens a note field) |
+
+Each click writes `ring_id`, `version`, `decision`, `note`, `decided_at` (UTC, milliseconds), the same fields the page writes, plus `decided_by` (for example `slack:U0123ABC:jane.doe`) and `channel` (`slack`, `console` or `page`). The card then shows who decided and when.
+
+Suppression: when a ring was dismissed, later versions of it are still read and logged but not posted again for `SUPPRESS_HOURS` (default 24), unless the ring grows materially (at least 2 more accounts, or at least 50 % more money), in which case it is re-posted as re-opened. A new ring sharing at least half its accounts with a dismissed one is posted with a note naming the related ring. The state is read back from the `decisions` stream, so it survives a restart. Freeze and Needs more info never suppress.
+
+The case packet (`services/notifier/packet.py`) is the draft an investigator would file: header, the five summary parts, key facts, accounts with roles, every transfer with its `txn_id` (traceable to `clean.csv`), data lineage (the input file's SHA-256), the decision log and a disclaimer. Every number in the summary and key facts comes from the facts pack.
+
 ## Libraries
 
-[pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [PyTorch](https://pytorch.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/).
+[pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [PyTorch](https://pytorch.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/), [slack-bolt](https://github.com/slackapi/bolt-python), [slack-sdk](https://github.com/slackapi/python-slack-sdk).

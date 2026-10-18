@@ -389,6 +389,39 @@ def report(summary) -> str:
     return "\n".join(lines)
 
 
+def markdown_report(summary, params=None) -> str:
+    """The same summary the script prints, as a Markdown file for the repo or the pitch.
+
+    summary: the dict main() returns (keys "attempts", "labels", "gnn_sweep", each optional).
+    params: the run parameters to list under the title (name -> value; empty ones are left out).
+    """
+    lines = ["# Ring-level evaluation", ""]
+    params = {k: v for k, v in (params or {}).items() if v not in (None, "", False)}
+    if params:
+        lines += ["## Run parameters", "", "| Parameter | Value |", "|---|---|"]
+        lines += ["| %s | `%s` |" % (k, v) for k, v in params.items()]
+        lines.append("")
+    s = summary.get("attempts")
+    if s:
+        lines += ["## Headline numbers", "", "| Measure | Value |", "|---|---|",
+                  "| Known attempts starting in the period | %d |" % s["attempts_in_period"],
+                  "| Caught by a ring | %d (%s) |" % (s["caught"], pct(s["caught_share"])),
+                  "| Covered (half the attempt's accounts in one ring) | %d |" % s["covered"],
+                  "| Shape match rate at the first alert, among caught | %s |" % pct(s["shape_match_share"]),
+                  "| Median minutes from first transfer to alert | %s |" % num(s["minutes_to_alert_median"]),
+                  "| Median share of the money still stoppable at the alert | %s |" % pct(s["still_stoppable_median"]),
+                  "", "## Against the known attempts (HI-Small_Patterns.txt)", "", report(s), ""]
+    if summary.get("labels"):
+        lines += ["## Against the transfer labels (clean.csv)", "", label_report(summary["labels"]), ""]
+    if summary.get("gnn_sweep"):
+        lines += ["## GNN sweep", "",
+                  "Each row keeps only the ring versions whose gnn_score is at or above the threshold; "
+                  "\"no GNN\" is the baseline.", "", sweep_report(summary["gnn_sweep"]), ""]
+    if not any(summary.get(k) for k in ("attempts", "labels", "gnn_sweep")):
+        lines += ["No results: give --patterns and/or --labels.", ""]
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- command line
 
 def main(argv=None):
@@ -405,6 +438,7 @@ def main(argv=None):
     src.add_argument("--rings-file", help="JSON lines, one rings message per line")
     p.add_argument("--stream", default="rings")
     p.add_argument("--out", help="write the summary as JSON here")
+    p.add_argument("--markdown", help="also write the summary as a readable Markdown report here")
     p.add_argument("--gnn-sweep", nargs="?", const=",".join("%g" % t for t in GNN_SWEEP),
                    help="repeat the numbers keeping only rings with gnn_score at or above each of these "
                         "comma-separated thresholds (default when given alone: %(const)s)")
@@ -464,6 +498,15 @@ def main(argv=None):
     if args.out:
         with open(args.out, "w") as fh:
             json.dump(summary, fh, indent=1, default=str)
+    if args.markdown:
+        params = {"patterns": args.patterns, "labels": args.labels, "models": args.models, "rates": args.rates,
+                  "splits": args.splits, "since": since.strftime(ISO) if since else None,
+                  "until": until.strftime(ISO) if until else None,
+                  "rings from": ("redis stream %s" % args.stream) if args.redis else args.rings_file,
+                  "ring versions read": len(raw),
+                  "gnn sweep": ",".join("%g" % t for t in sweep) if sweep is not None else None}
+        with open(args.markdown, "w") as fh:
+            fh.write(markdown_report(summary, params))
     return summary
 
 

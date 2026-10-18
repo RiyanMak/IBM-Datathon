@@ -8,6 +8,9 @@ pytest.importorskip("flask")
 
 from common import bus
 from services.page.flask_app import create_app
+from services.page.models import decision_label
+
+FROZEN = decision_label("freeze")   # the page's own wording, so a label change never breaks these tests
 
 
 def ring_msg(ring_id="R-1", version=1, **over):
@@ -59,7 +62,7 @@ def test_state_lists_rings_with_decisions_and_cases(client):
     by_id = {x["ring_id"]: x for x in s["rings"]}
     assert set(by_id) == {"R-1", "R-2"}
     assert by_id["R-1"]["shape_label"] == "Scatter-gather" and by_id["R-1"]["has_case"] and by_id["R-1"]["decision"] is None
-    assert by_id["R-2"]["decision"]["label"] == "Frozen" and by_id["R-2"]["gnn_score"] == "–"
+    assert by_id["R-2"]["decision"]["label"] == FROZEN and by_id["R-2"]["gnn_score"] == "–"
     assert s["open_rings"] == 1
 
 
@@ -80,12 +83,12 @@ def test_decide_writes_the_stream_and_rejects_bad_input(client):
     c, r = client
     r.xadd(bus.RINGS, ring_msg())
     ok = c.post("/api/decide", json={"ring_id": "R-1", "version": 1, "decision": "freeze", "note": "mule M"})
-    assert ok.status_code == 200 and ok.get_json()["label"] == "Frozen"
+    assert ok.status_code == 200 and ok.get_json()["label"] == FROZEN
     saved = r.xrange(bus.DECISIONS, "-", "+")[0][1]
     assert saved["ring_id"] == "R-1" and saved["decision"] == "freeze" and saved["note"] == "mule M" and saved["version"] == "1"
     bad = c.post("/api/decide", json={"ring_id": "R-1", "version": 1, "decision": "shrug"})
     assert bad.status_code == 400 and "decision must be one of" in bad.get_json()["error"]
-    assert c.get("/api/state").get_json()["rings"][0]["decision"]["label"] == "Frozen"
+    assert c.get("/api/state").get_json()["rings"][0]["decision"]["label"] == FROZEN
 
 
 def test_page_survives_redis_being_down():
@@ -99,3 +102,27 @@ def test_page_survives_redis_being_down():
     s = c.get("/api/state").get_json()
     assert s["redis_ok"] is False and s["rings"] == []
     assert c.post("/api/decide", json={"ring_id": "R-1", "version": 1, "decision": "freeze"}).status_code == 503
+
+
+def test_case_packet_downloads_as_markdown(client):
+    c, r = client
+    r.xadd(bus.RINGS, ring_msg())
+    r.xadd(bus.CASES, case_msg())
+    r.xadd(bus.DECISIONS, {"ring_id": "R-1", "version": "1", "decision": "freeze", "note": "mule",
+                           "decided_at": "2026-10-17T20:01:00+00:00"})
+    res = c.get("/api/ring/R-1/packet.md?version=1")
+    assert res.status_code == 200
+    assert res.headers["Content-Type"] == "text/markdown; charset=utf-8"
+    assert res.headers["Content-Disposition"] == 'attachment; filename="case_R-1_v1.md"'
+    text = res.data.decode()
+    assert text.startswith("# Case packet: R-1, version 1")
+    assert "Three accounts moved $195." in text and "| t1 |" in text and "Frozen" in text
+    assert "/packet.md" in c.get("/").data.decode()
+
+
+def test_case_packet_without_a_case_is_404_json(client):
+    c, r = client
+    r.xadd(bus.RINGS, ring_msg())
+    for path in ("/api/ring/R-1/packet.md", "/api/ring/R-9/packet.md"):
+        res = c.get(path)
+        assert res.status_code == 404 and "no case yet" in res.get_json()["error"]

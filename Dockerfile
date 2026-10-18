@@ -15,7 +15,7 @@ RUN pip freeze | grep -iE "^(pandas|numpy|scipy|torch|xgboost|scikit-learn|netwo
 
 # Packages every service needs, plus pytest and fakeredis so the test suite, the GNN
 # training and the evaluation all run inside this image on the VM. All pure Python.
-RUN pip install --no-cache-dir -c /tmp/constraints.txt redis requests flask pytest fakeredis
+RUN pip install --no-cache-dir -c /tmp/constraints.txt redis requests flask pytest fakeredis slack-bolt slack-sdk
 
 # Packages that may have no s390x wheel (streamlit needs pyarrow; snapml and
 # ibm-watsonx-ai are IBM-specific). Each is tried on its own under the same

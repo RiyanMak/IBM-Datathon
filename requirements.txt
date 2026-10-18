@@ -11,3 +11,5 @@ ibm-watsonx-ai
 snapml
 requests
 pytest
+slack-bolt
+slack-sdk

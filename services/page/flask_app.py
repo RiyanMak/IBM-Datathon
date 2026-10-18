@@ -13,6 +13,7 @@ Routes:
     GET  /                 the page
     GET  /api/state        counters, the ring list, decisions: one snapshot
     GET  /api/ring/<id>    one ring in full: picture (DOT), reasons, facts, case, history
+    GET  /api/ring/<id>/packet.md   the case packet (Markdown draft for filing) as a download
     POST /api/decide       {"ring_id", "version", "decision", "note"} -> the decisions stream
     GET  /healthz          "ok"
 """
@@ -20,12 +21,12 @@ Routes:
 import argparse
 import time
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from redis.backoff import NoBackoff
 from redis.retry import Retry
 
 from common import bus
-from services.page import decisions, fmt, graph, state
+from services.page import decisions, fmt, graph, packet_export, state
 from services.page.models import PageState, decision_label, shape_label
 
 REFRESH_MS = 2000
@@ -115,6 +116,20 @@ def create_app(client_factory=redis_client) -> Flask:
             return jsonify({"error": "no ring %s" % ring_id}), 404
         return jsonify(ring_json(r, snap, ring))
 
+    @app.get("/api/ring/<ring_id>/packet.md")
+    def api_packet(ring_id):
+        """The case packet as a file. `?version=` picks the reviewed version when given."""
+        try:
+            found = packet_export.build(client_factory(), ring_id, request.args.get("version"))
+        except Exception:   # build never raises; a broken client factory still must not 500
+            found = None
+        if found is None:
+            return jsonify({"error": "no case yet for %s; the case packet is available once the "
+                                     "case writer has published an explanation" % ring_id}), 404
+        name, markdown = found
+        return Response(markdown, mimetype="text/markdown", headers={
+            "Content-Disposition": 'attachment; filename="%s"' % name.replace('"', "")})
+
     @app.post("/api/decide")
     def api_decide():
         body = request.get_json(silent=True) or {}
@@ -168,6 +183,9 @@ PAGE = r"""<!doctype html>
   .buttons { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
   button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   button.primary { background:var(--red); color:#fff; border-color:var(--red); }
+  a.button { display:inline-block; font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:#fff; color:var(--fg); text-decoration:none; }
+  a.button:hover { border-color:var(--fg); }
+  .packet { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
   .flash { color:var(--green); margin-top:8px; min-height:1.2em; } .flash.bad { color:var(--red); }
   label.chk { color:var(--muted); font-size:13px; margin-left:12px; }
   .muted { color:var(--muted); }
@@ -272,6 +290,12 @@ async function loadDetail() {
         <button onclick="decide('dismiss')">Dismiss</button>
       </div>
       <div id="flash" class="flash"></div>
+      <div class="packet">
+        ${d.case ? `<a class="button" href="/api/ring/${encodeURIComponent(d.ring_id)}/packet.md?version=${d.version}" download>Download case packet (.md)</a>
+        <p class="muted" style="font-size:13px;margin:6px 0 0">A Markdown draft of the case for filing: summary, facts, accounts, transfers with transaction IDs, decision log. Every number traces to clean.csv.</p>`
+        : `<button disabled>Download case packet (.md)</button>
+        <p class="muted" style="font-size:13px;margin:6px 0 0">The case packet is available once the case writer has published an explanation.</p>`}
+      </div>
     </div>`;
   drawDot(d.dot);
 }

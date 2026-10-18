@@ -3,7 +3,7 @@ import uuid
 
 import streamlit as st
 
-from services.page import decisions, fmt, state, ui
+from services.page import decisions, fmt, packet_export, state, ui
 from services.page.models import decision_label
 
 
@@ -47,6 +47,32 @@ def decision_form(ring):
     st.rerun()
 
 
+PACKET_CAPTION = ("A Markdown draft of the case for filing: summary, facts, accounts, transfers with "
+                  "transaction IDs, decision log. Every number traces to clean.csv.")
+PACKET_PENDING = "The case packet is available once the case writer has published an explanation."
+
+
+@st.fragment(run_every=ui.REFRESH_S)
+def case_packet(ring):
+    """The download for the reviewed case. Refreshes with the history, so a Granite
+    upgrade or a new decision is in the file without leaving the page."""
+    st.markdown("**Case packet**")
+    found = None
+    if ui.current_snapshot().redis_ok:
+        try:
+            found = packet_export.build(ui.redis_client(), ring.ring_id, ring.version)
+        except Exception:
+            found = None
+    if found:
+        name, markdown = found
+        st.download_button("Download case packet (.md)", data=markdown, file_name=name, mime="text/markdown",
+                           type="secondary", width="stretch", on_click="ignore", key="packet-" + ring.ring_id)
+        st.caption(PACKET_CAPTION)
+    else:
+        st.button("Download case packet (.md)", disabled=True, width="stretch", key="packet-off-" + ring.ring_id)
+        st.caption(PACKET_PENDING)
+
+
 @st.fragment(run_every=ui.REFRESH_S)
 def history(ring):
     st.markdown("**Recorded decisions**")
@@ -83,5 +109,6 @@ else:
     with form_col:
         decision_form(reviewed)
     with history_col:
+        case_packet(reviewed)
         history(reviewed)
 ui.step_links(previous="evidence")

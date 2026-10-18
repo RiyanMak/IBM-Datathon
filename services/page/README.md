@@ -133,6 +133,17 @@ real customer data without first adding a trustworthy data-provenance contract.
 - Diagnostics expose the bounded stream windows, connection freshness, and separate dataset times.
   No progress percentage is inferred when the replayer does not supply one.
 
+### Case packet download
+
+**Decide** offers **Download case packet (.md)** above *Recorded decisions*; the Flask fallback offers
+the same link under its decision form, served by `GET /api/ring/<ring_id>/packet.md` (404 with a JSON
+message while no case exists). `packet_export.py` reads the case for the reviewed version (else the
+newest), the matching `rings` message and the ring's decisions with the same bounded windows as
+`state.py`, and renders them with the notifier's `services/notifier/packet.py`: summary, key facts,
+accounts, transfers with `txn_id`s that trace to clean.csv, data lineage and the decision log. Until
+the case writer has published an explanation the button is disabled and says so. The file is a draft
+for a person to review and file; downloading it records nothing.
+
 ### Checks and demo
 
 ```bash
