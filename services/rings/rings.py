@@ -56,6 +56,7 @@ HUB_LIMIT = 300
 MIN_SIZE = 3
 MAX_SIZE = 50
 RETIRE_MINUTES = 7 * 24 * 60   # forget a ring not seen in a group for this long
+EXPAND_THRESHOLD = 0.5         # a ring member's transfers at or above this score join its ring
 MAX_REASONS = 3
 SHAPES = ("scatter-gather", "gather-scatter", "cycle", "stack", "bipartite", "fan-out", "fan-in", "other")
 
@@ -290,9 +291,15 @@ def is_stack(accounts, out, inn) -> bool:
 
 
 def is_bipartite(accounts, out, inn) -> bool:
-    """Two groups, every arrow from the first to the second, at least 2 accounts each."""
+    """Two groups, every arrow from the first to the second, with layering on both sides:
+    at least 2 senders that each pay 2 or more, and at least 2 receivers each paid by 2 or more.
+    (One account paying several others with one extra sender is a fan-out, not bipartite.)"""
     sources, middles, sinks = layers(accounts, out, inn)
-    return len(sources) >= 2 and len(sinks) >= 2 and not middles
+    if middles or len(sources) < 2 or len(sinks) < 2:
+        return False
+    busy_sources = sum(1 for a in sources if len(out[a]) >= 2)
+    busy_sinks = sum(1 for a in sinks if len(inn[a]) >= 2)
+    return busy_sources >= 2 and busy_sinks >= 2
 
 
 def name_shape(accounts, edges) -> str:
@@ -319,27 +326,57 @@ def name_shape(accounts, edges) -> str:
 # ---------------------------------------------------------------- rings
 
 class Ring:
-    __slots__ = ("ring_id", "version", "accounts", "txn_ids", "shape", "last_active_min")
+    __slots__ = ("ring_id", "version", "core", "accounts", "txn_ids", "shape", "last_active_min")
 
     def __init__(self, ring_id, now_min):
         self.ring_id = ring_id
         self.version = 0
-        self.accounts = set()
+        self.core = set()           # the accounts joined by transfers at or above the ring threshold
+        self.accounts = set()       # core plus the accounts pulled in by expansion
         self.txn_ids = set()
         self.shape = "other"
         self.last_active_min = now_min
 
 
 def match_ring(group, rings, claimed) -> "Ring | None":
-    """The existing ring that shares at least half of the group's accounts (the best one)."""
+    """The existing ring whose core shares at least half of the group's accounts (the best one)."""
     best, best_share = None, 0.0
     for ring in rings.values():
-        if ring.ring_id in claimed or not ring.accounts:
+        if ring.ring_id in claimed or not ring.core:
             continue
-        share = len(group & ring.accounts) / len(group)
+        share = len(group & ring.core) / len(group)
         if share >= 0.5 and share > best_share:
             best, best_share = ring, share
     return best
+
+
+def expand_group(core, edges, hubs=frozenset(), max_size=MAX_SIZE):
+    """The ring's transfers and accounts, starting from a core group.
+
+    Every window transfer between two core accounts is in. Then one hop out: a
+    transfer between a core account and any other account (a member's weaker-scoring
+    transfer, kept in the window because it is above the expand threshold) joins too,
+    highest score first, as long as the ring stays within max_size accounts. Hubs and
+    self-transfers never join. Expanded accounts do not expand further.
+    """
+    inside, outward = [], []
+    for e in edges:
+        if e.src == e.dst or e.src in hubs or e.dst in hubs:
+            continue
+        a, b = e.src in core, e.dst in core
+        if a and b:
+            inside.append(e)
+        elif a or b:
+            outward.append(e)
+    accounts = set(core)
+    ring_edges = list(inside)
+    for e in sorted(outward, key=lambda e: -e.score):
+        other = e.dst if e.src in core else e.src
+        if other not in accounts and len(accounts) >= max_size:
+            continue
+        accounts.add(other)
+        ring_edges.append(e)
+    return ring_edges, accounts
 
 
 def top_reasons(edges, k=MAX_REASONS) -> list:
@@ -377,8 +414,11 @@ class RingService:
     """Feed it scored messages in order; it returns the rings to publish."""
 
     def __init__(self, threshold, window_minutes=WINDOW_MINUTES, regroup_minutes=REGROUP_MINUTES,
-                 hub_limit=HUB_LIMIT, min_size=MIN_SIZE, max_size=MAX_SIZE, new_id=None):
+                 hub_limit=HUB_LIMIT, min_size=MIN_SIZE, max_size=MAX_SIZE, new_id=None,
+                 expand_threshold=EXPAND_THRESHOLD):
         self.threshold = float(threshold)
+        # a member's transfers at or above this score join its ring (never above the ring threshold)
+        self.expand_threshold = min(float(expand_threshold), self.threshold)
         self.window = Window(window_minutes)
         self.regroup_minutes = regroup_minutes
         self.hub_limit, self.min_size, self.max_size = hub_limit, min_size, max_size
@@ -406,7 +446,7 @@ class RingService:
         self.now_min = edge.ts_min if self.now_min is None else max(self.now_min, edge.ts_min)
         if self.last_regroup_min is None:
             self.last_regroup_min = self.now_min
-        if edge.score >= self.threshold and edge.src != edge.dst:
+        if edge.score >= self.expand_threshold and edge.src != edge.dst:
             if self.window.add(edge):
                 self.stats["kept"] += 1
                 self.dirty = True
@@ -425,27 +465,30 @@ class RingService:
         self.stats["regroups"] += 1
         self.window.prune(self.now_min)
         edges = list(self.window.edges)
-        groups, hubs = make_groups(edges, self.hub_limit, self.min_size, self.max_size)
+        candidates = [e for e in edges if e.score >= self.threshold]
+        groups, hubs = make_groups(candidates, self.hub_limit, self.min_size, self.max_size)
         self.stats["hubs"] = len(hubs)
+        self.stats["candidates_in_window"] = len(candidates)
 
         published, claimed = [], set()
-        for group in groups:
-            group_edges = [e for e in edges if e.src in group and e.dst in group and e.src != e.dst]
-            if not group_edges:
+        for core in groups:
+            ring_edges, accounts = expand_group(core, edges, hubs, self.max_size)
+            if not ring_edges:
                 continue
-            txn_ids = {e.txn_id for e in group_edges}
-            ring = match_ring(group, self.rings, claimed)
+            txn_ids = {e.txn_id for e in ring_edges}
+            ring = match_ring(core, self.rings, claimed)
             if ring is None:
                 ring = Ring(self._new_id(), self.now_min)
                 self.rings[ring.ring_id] = ring
             claimed.add(ring.ring_id)
             ring.last_active_min = self.now_min
-            if ring.version == 0 or ring.accounts != group or ring.txn_ids != txn_ids:
+            if ring.version == 0 or ring.accounts != accounts or ring.txn_ids != txn_ids:
                 ring.version += 1
-                ring.accounts = set(group)
+                ring.core = set(core)
+                ring.accounts = accounts
                 ring.txn_ids = txn_ids
-                ring.shape = name_shape(group, group_edges)
-                published.append(ring_fields(ring, group_edges, self.data_time()))
+                ring.shape = name_shape(accounts, ring_edges)
+                published.append(ring_fields(ring, ring_edges, self.data_time()))
                 self.stats["published"] += 1
 
         for ring_id in [rid for rid, r in self.rings.items()
@@ -558,6 +601,9 @@ def build_parser():
     p.add_argument("--models", default=os.environ.get("MODELS_PATH", str(MODELS_DIR)),
                    help="folder with thresholds.json (default: %(default)s)")
     p.add_argument("--ring-threshold", type=float, help="use this score instead of thresholds.json")
+    p.add_argument("--expand-threshold", type=float, default=EXPAND_THRESHOLD,
+                   help="a ring member's other transfers at or above this score join the ring "
+                        "(default: %(default)s; set it equal to the ring threshold to disable)")
     p.add_argument("--window-hours", type=float, default=WINDOW_MINUTES / 60,
                    help="keep transfers this many data hours (default: %(default)s)")
     p.add_argument("--regroup-minutes", type=int, default=REGROUP_MINUTES,
@@ -588,11 +634,12 @@ def main(argv=None, r=None):
     threshold = args.ring_threshold if args.ring_threshold is not None else load_threshold(args.models)
     r = r or bus.connect()
     service = RingService(threshold, int(args.window_hours * 60), args.regroup_minutes, args.hub_limit,
-                          args.min_size, args.max_size, new_id=lambda: "R-%04d" % r.incr(ID_KEY))
-    log("grouping '%s' -> '%s' as consumer '%s': ring threshold %.4f, window %gh, regroup every %d min, "
-        "hubs > %d counterparties, rings of %d..%d accounts"
-        % (args.stream, args.out_stream, args.consumer, threshold, args.window_hours,
-           args.regroup_minutes, args.hub_limit, args.min_size, args.max_size))
+                          args.min_size, args.max_size, new_id=lambda: "R-%04d" % r.incr(ID_KEY),
+                          expand_threshold=args.expand_threshold)
+    log("grouping '%s' -> '%s' as consumer '%s': ring threshold %.4f, expand threshold %.4f, window %gh, "
+        "regroup every %d min, hubs > %d counterparties, rings of %d..%d accounts"
+        % (args.stream, args.out_stream, args.consumer, threshold, service.expand_threshold,
+           args.window_hours, args.regroup_minutes, args.hub_limit, args.min_size, args.max_size))
 
     stop = threading.Event()
     old_handlers = {}

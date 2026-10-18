@@ -28,8 +28,10 @@ services:
   replayer:
     build: .
     profiles: ["replay"]
-    # --resume: after a crash or restart, continue after the last transfer already sent
-    command: python -m services.replayer.main --resume
+    # --resume: after a crash or restart, continue after the last transfer already sent.
+    # --maxlen: keep the whole test period (1.02 million transfers, about 200 MB in Redis)
+    # so a scorer that falls behind delays messages instead of losing them to trimming.
+    command: python -m services.replayer.main --resume --maxlen 1100000
     environment:
       - SPEED=${SPEED:-600}
     volumes:

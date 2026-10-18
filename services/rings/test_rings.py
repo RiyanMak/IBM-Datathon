@@ -115,6 +115,7 @@ def test_each_shape_rule():
     assert shape(("S1", "H"), ("S2", "H"), ("H", "R1"), ("H", "R2")) == "gather-scatter"
     assert shape(("A", "M1"), ("A", "M2"), ("M1", "B"), ("M2", "B")) == "scatter-gather"
     assert shape(("S1", "T1"), ("S1", "T2"), ("S2", "T1"), ("S2", "T2")) == "bipartite"
+    assert shape(("M", "P1"), ("M", "P2"), ("M", "P3"), ("Q", "P1")) == "fan-out"   # one extra sender is not a layer
     assert shape(("S1", "M1"), ("S2", "M2"), ("S1", "M2"), ("M1", "T1"), ("M2", "T2"), ("M2", "T1")) == "stack"
     # scatter-gather wins over fan-out when both apply
     assert shape(("A", "M1"), ("A", "M2"), ("A", "M3"), ("M1", "B"), ("M2", "B")) == "scatter-gather"
@@ -203,6 +204,41 @@ def test_regroups_every_10_data_minutes_and_keeps_ids_stable():
     assert [(o["ring_id"], o["version"], o["shape"]) for o in out] == [("R-0002", "1", "cycle")]
 
 
+def test_members_weaker_transfers_join_the_ring():
+    """Grouping uses transfers at or above the ring threshold; once a group exists, its members'
+    transfers at or above the expand threshold join it, one hop out."""
+    s = RingService(threshold=0.9, expand_threshold=0.5, regroup_minutes=10)
+    s.offer(scored("M", "P1", 0.95, 0)); s.offer(scored("M", "P2", 0.96, 1))     # the core
+    s.offer(scored("M", "P3", 0.60, 2)); s.offer(scored("M", "P4", 0.70, 3))     # weaker, from a member: join
+    s.offer(scored("M", "P5", 0.20, 4))                                           # too weak: stays out
+    s.offer(scored("Q", "P1", 0.55, 5))                                           # into a member: joins (one hop)
+    s.offer(scored("Z1", "Z2", 0.65, 6))                                          # weak and unrelated: no ring
+    out = s.offer(scored("X", "Y", 0.1, 12))
+    assert len(out) == 1
+    f = out[0]
+    assert json.loads(f["accounts"]) == ["M", "P1", "P2", "P3", "P4", "Q"]
+    assert len(json.loads(f["edges"])) == 5
+    assert f["shape"] == "fan-out"
+    assert s.stats["candidates_in_window"] == 2 and len(s.window) == 6
+
+    # the size cap: expansion adds the highest-scoring transfers first and stops at max_size
+    s = RingService(threshold=0.9, expand_threshold=0.5, regroup_minutes=10, max_size=4)
+    s.offer(scored("M", "P1", 0.95, 0)); s.offer(scored("M", "P2", 0.96, 1))
+    for i, sc in enumerate((0.6, 0.8, 0.7)):
+        s.offer(scored("M", f"W{i}", sc, 2 + i))
+    out = s.offer(scored("X", "Y", 0.1, 12))
+    assert json.loads(out[0]["accounts"]) == ["M", "P1", "P2", "W1"]              # W1 scored 0.8
+
+    # expansion never pulls in a hub or a self-transfer
+    s = RingService(threshold=0.9, expand_threshold=0.5, regroup_minutes=10, hub_limit=2)
+    s.offer(scored("A", "B", 0.95, 0)); s.offer(scored("B", "C", 0.95, 1))
+    for i in range(3):
+        s.offer(scored("HUB", f"h{i}", 0.95, 2))
+    s.offer(scored("A", "HUB", 0.7, 3)); s.offer(scored("A", "A", 0.99, 4))
+    out = s.offer(scored("X", "Y", 0.1, 12))
+    assert json.loads(out[0]["accounts"]) == ["A", "B", "C"]
+
+
 def test_ring_message_fields_and_reasons():
     es = edges(("M", "P1", 0), ("M", "P2", 1), ("P1", "B", 5))
     es[0].reasons = ["paid by ACH", "new payee"]
@@ -224,7 +260,7 @@ def test_ring_message_fields_and_reasons():
 
 def test_match_ring_needs_half_the_accounts():
     from services.rings.rings import Ring
-    r = Ring("R-0001", 0); r.accounts = {"A", "B", "C", "D"}; r.version = 1
+    r = Ring("R-0001", 0); r.core = {"A", "B", "C", "D"}; r.accounts = set(r.core) | {"E"}; r.version = 1
     rings = {"R-0001": r}
     assert match_ring({"A", "B", "X"}, rings, set()) is r          # 2 of 3 shared
     assert match_ring({"A", "X", "Y", "Z"}, rings, set()) is None  # 1 of 4
