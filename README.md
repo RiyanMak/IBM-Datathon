@@ -57,6 +57,20 @@ Run from the repo root:
 
 Add `--overwrite` to replace existing outputs. `--nrows N` (the first N rows) also works, but the start of the file has no exchange-rate evidence for some currencies, so it fails on purpose.
 
+## GNN ring re-scorer (step 4 part B)
+
+Gives every candidate ring a second score from a small graph neural network run over the transfers two hops around it, and drops weak rings before they reach the case writer. Plain PyTorch, JSON weights (portable to s390x), trained on `data/processed/clean.csv`. Lives in `services/gnn/`, see its README for how the ring service calls it (one import, one call) and the results.
+
+```bash
+# checks
+python -m pytest -q services/gnn
+
+# real rings from the Patterns file, scored, then precision before/after
+python -m services.gnn.patterns_to_rings ~/Downloads/HI-Small_Patterns.txt data/gnn/real_rings.json --txns data/processed/clean.csv --from-ts 2022-09-08T16:12:00 --decoys 200
+python -m services.gnn.main --file data/gnn/real_rings.json --txns data/processed/clean.csv --keep-weak --out data/gnn/real_rescored.json
+python -m services.gnn.evaluate --rings data/gnn/real_rescored.json --patterns ~/Downloads/HI-Small_Patterns.txt
+```
+
 ## Case writer
 
 Turns each ring from the `rings` Redis stream into a short plain-English case on the `cases` stream. Code computes every number into a facts pack; Granite (watsonx.ai) only rewords it, and a fact check rejects any reply with an invented number, account or date, falling back to a template. Lives in `services/casewriter/`, see its README.
@@ -73,4 +87,4 @@ Redis host and stream names for every service come from `common/bus.py` (`REDIS_
 
 ## Libraries
 
-[pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/).
+[pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [PyTorch](https://pytorch.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/).
