@@ -565,18 +565,30 @@ def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None,
         reply = r.xreadgroup(GROUP, consumer, {IN_STREAM: start}, count=10, block=block)
         return [m for _stream, msgs in reply or [] for m in msgs]
 
+    def settle(step, what):
+        """Run one Redis step; when Redis does not answer in time (a busy replay on a
+        small VM), wait a second and try again instead of exiting. A restart would lose
+        the rings in memory and the stats counters."""
+        while True:
+            try:
+                return step()
+            except (redis.exceptions.TimeoutError, redis.exceptions.ConnectionError) as exc:
+                print("Redis not answering during %s (%s); retrying in 1 s" % (what, exc.__class__.__name__),
+                      file=sys.stderr)
+                time.sleep(1)
+
     # Messages this consumer read but never acked (it stopped mid-batch) come back with
     # id "0". Finish those first, then switch to new messages.
-    pending = read("0")
+    pending = settle(lambda: read("0"), "pending read")
     while pending:
-        handle(pending)
-        pending = read("0")
+        settle(lambda: handle(pending), "pending")
+        pending = settle(lambda: read("0"), "pending read")
 
     loops = 0
     while max_loops is None or loops < max_loops:
         loops += 1
-        messages = read(">", block_ms)
-        handle(messages)
+        messages = settle(lambda: read(">", block_ms), "read")
+        settle(lambda: handle(messages), "handle")
         if messages:
             print(stats.line())
         if listener is not None and max_loops is not None:

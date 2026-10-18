@@ -181,6 +181,35 @@ def test_redis_end_to_end():
     assert {fields["ring_id"] for _id, fields in cases} == {"R-0001", "R-0002", "R-0003"}
 
 
+def test_a_redis_timeout_is_retried_not_fatal(monkeypatch):
+    """A busy Redis that does not answer a read in time must not end the service: the
+    loop waits a second and asks again (a restart would lose the stats counters)."""
+    try:
+        import fakeredis
+    except ImportError:
+        import pytest
+        pytest.skip("pip install fakeredis to run it")
+    import redis
+    from services.casewriter import casewriter
+    from services.casewriter.casewriter import push_fake, run_redis
+    r = fakeredis.FakeRedis(decode_responses=True)
+    push_fake(str(FAKE_RINGS), r)
+    real = r.xreadgroup
+    failures = {"left": 2}
+
+    def flaky(*args, **kwargs):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise redis.exceptions.TimeoutError("Timeout reading from socket")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(r, "xreadgroup", flaky)
+    monkeypatch.setattr(casewriter.time, "sleep", lambda s: None)
+    run_redis(use_granite=False, r=r, max_loops=1, block_ms=10)
+    assert failures["left"] == 0
+    assert len(r.xrange("cases")) == 3
+
+
 def test_service_publishes_template_first_then_the_granite_upgrade():
     """The service writes the template at once and a Granite case afterwards from its worker."""
     try:
