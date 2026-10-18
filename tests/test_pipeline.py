@@ -5,7 +5,6 @@ Each test writes a tiny CSV into tmp_path and calls the scripts' main(argv).
 
 import json
 
-import pandas as pd
 import pytest
 
 from common.clean_transactions import read_clean_csv, write_clean_csv
