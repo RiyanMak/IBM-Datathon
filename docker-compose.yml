@@ -16,7 +16,7 @@
 
 services:
   redis:
-    image: docker.io/library/redis:7
+    image: docker.io/library/redis:7-alpine   # the plain redis:7 tag has no s390x build
     # No published port on purpose: only reachable inside this network.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
