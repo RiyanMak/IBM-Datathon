@@ -31,8 +31,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-
 from common.clean_transactions import (
     DataValidationError,
     load_raw,
