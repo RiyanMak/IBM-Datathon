@@ -72,10 +72,15 @@ services:
   casewriter:
     build: .
     command: python -m services.casewriter.main
-    # watsonx credentials; without a .env the case writer uses the template only
+    # watsonx credentials from .env when present. Without them the case writer runs
+    # Granite locally through llama.cpp if the base image's GGUF is found (or set
+    # GRANITE_GGUF), on GRANITE_THREADS cores; with neither it uses the template only.
     env_file:
       - path: .env
         required: false
+    environment:
+      - GRANITE_GGUF=${GRANITE_GGUF:-}
+      - GRANITE_THREADS=${GRANITE_THREADS:-1}
     volumes:
       - ~/shared:/data
     depends_on:

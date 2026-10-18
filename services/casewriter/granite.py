@@ -52,8 +52,73 @@ def api_key():
     return os.environ.get("WATSONX_APIKEY") or os.environ.get("WATSONX_API_KEY") or ""
 
 
-def granite_configured():
+def watsonx_configured():
     return bool(api_key()) and all(os.environ.get(k) for k in ("WATSONX_PROJECT_ID", "WATSONX_URL"))
+
+
+# --- Granite on the machine itself, through llama.cpp -----------------------------
+# The LinuxONE Jupyter image ships llama_cpp_python and a Granite GGUF built for
+# s390x (big-endian). When watsonx credentials are absent and that file is found,
+# the case writer runs Granite locally: no network, no key, and the summary is
+# written on IBM Z. Point GRANITE_GGUF at the file to choose a different one.
+LOCAL_GGUF_ENV = "GRANITE_GGUF"
+LOCAL_SEARCH_DIRS = ("/data/models", "/home/ibm-user", "/home/jovyan", "/opt", "/app", "/models", ".")
+_local_llm = None
+
+
+def local_model_path():
+    """The GGUF file to use, or '' if none is available."""
+    explicit = os.environ.get(LOCAL_GGUF_ENV, "")
+    if explicit:
+        return explicit if os.path.exists(explicit) else ""
+    import glob
+    for folder in LOCAL_SEARCH_DIRS:
+        hits = sorted(glob.glob(os.path.join(folder, "granite*.gguf")))
+        if hits:
+            return hits[0]
+    return ""
+
+
+def local_configured():
+    if not local_model_path():
+        return False
+    try:
+        import llama_cpp  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def granite_configured():
+    return watsonx_configured() or local_configured()
+
+
+def granite_backend():
+    """'watsonx', 'local' or '' (template only)."""
+    if watsonx_configured():
+        return "watsonx"
+    if local_configured():
+        return "local"
+    return ""
+
+
+def call_granite_local(facts):
+    """Run Granite through llama.cpp on this machine and return its raw reply text.
+
+    The packaged model is a base (completion) model, not a chat model, so the prompt
+    ends with the opening brace of the JSON and the model continues it. Whatever it
+    produces goes through the same fact check as a watsonx reply.
+    """
+    global _local_llm
+    from llama_cpp import Llama
+
+    if _local_llm is None:
+        _local_llm = Llama(model_path=local_model_path(), n_ctx=int(os.environ.get("GRANITE_CTX", "2048")),
+                           n_threads=int(os.environ.get("GRANITE_THREADS", "1")), verbose=False)
+    prompt = SYSTEM_PROMPT + "\n\nFacts:\n" + json.dumps(facts, indent=1) + "\n\nReply:\n{"
+    out = _local_llm(prompt, max_tokens=int(os.environ.get("GRANITE_MAX_TOKENS", "300")), temperature=0.0,
+                     stop=["\n\n\n", "Facts:"])
+    return "{" + out["choices"][0]["text"]
 
 
 def build_messages(facts):
@@ -75,7 +140,12 @@ def _iam_token(api_key):
 
 
 def call_granite(facts):
-    """Send the facts to Granite and return its raw reply text."""
+    """Send the facts to Granite and return its raw reply text: watsonx when configured,
+    otherwise the local llama.cpp model."""
+    if not watsonx_configured():
+        if local_configured():
+            return call_granite_local(facts)
+        raise RuntimeError("Granite is not configured: no watsonx credentials and no local GGUF")
     import requests
     token = _iam_token(api_key())
     url = os.environ["WATSONX_URL"].rstrip("/") + "/ml/v1/text/chat?version=" + API_VERSION
