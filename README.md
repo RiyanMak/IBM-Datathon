@@ -86,6 +86,22 @@ python -m services.casewriter.main --file services/casewriter/fake_rings.json
 python -m services.casewriter.main
 ```
 
+## Reviewer bot
+
+Shows each case from the `cases` stream as a card (ring, shape, scores, the five-part summary, Granite or template) and records the investigator's freeze, dismiss or more_info on the same `decisions` stream the page reads, with who decided and through which channel. A dismissed ring is not re-posted for `SUPPRESS_HOURS` unless it grows. `--packet` prints a one-page Markdown case packet in which every transfer carries its `txn_id`. Console only for now; chat adapters are future work. Lives in `services/notifier/`, see its README.
+
+```bash
+# cards in the terminal; type: freeze R-0001 bank confirmed
+python -m services.notifier.main --console
+
+# the case packet for one ring
+python -m services.notifier.main --packet R-0001
+```
+
+## Evidence for the pitch
+
+`docs/demo-runbook.md` lists the VM commands, expected output and screenshot for each judging point. After a full replay, `python -m scripts.evaluate_rings ... --report data/evaluation/evaluation.md` writes the attempt-level numbers with their denominators and limitations; `data/evaluation/` is committed as evidence.
+
 Redis host and stream names for every service come from `common/bus.py` (`REDIS_HOST`, default `redis` inside compose). Watsonx settings come from `.env` (copy `.env.example`). `data/processed/fx_rates.json` from the cleaning run is the team's only exchange-rate table; `patterns_to_rings.py` reads it so test rings and the scorer agree on every dollar amount.
 
 ## Libraries
