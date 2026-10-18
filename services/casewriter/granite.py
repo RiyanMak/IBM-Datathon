@@ -102,23 +102,60 @@ def granite_backend():
     return ""
 
 
+# The reply shape, as a llama.cpp grammar: the model can only produce this JSON object
+# with these five keys, so "no JSON in reply" cannot happen and the fact check judges
+# the content alone.
+REPLY_GRAMMAR = r'''
+root ::= "{" ws "\"summary\":" ws str "," ws "\"what_happened\":" ws str "," ws "\"why_suspicious\":" ws str "," ws "\"possible_victim\":" ws str "," ws "\"suggested_next_step\":" ws str ws "}"
+str ::= "\"" ( [^"\\\n] | "\\" ["\\/bfnrt] )* "\""
+ws ::= [ \t\n]*
+'''
+
+def example_pair():
+    """A worked example for the base model: the case writer's own fake scatter-gather ring,
+    its facts pack as the code builds it, and the template's words as the reply. Built from
+    the real code paths so it always has the full facts shape and passes the fact check."""
+    import os.path
+    from services.casewriter.facts import build_facts, parse_ring
+    from services.casewriter.template import template_summary
+    with open(os.path.join(os.path.dirname(__file__), "fake_rings.json")) as fh:
+        ring = json.load(fh)[0]
+    fields = {k: (json.dumps(v) if isinstance(v, (list, dict)) else str(v)) for k, v in ring.items()}
+    facts = build_facts(parse_ring(fields))
+    return facts, template_summary(facts)
+
+
+def local_prompt(facts):
+    """A completion prompt for the base model: the rules, one worked example, then the facts."""
+    example_facts, example_reply = example_pair()
+    return (SYSTEM_PROMPT + "\n\nFacts:\n" + json.dumps(example_facts, indent=1)
+            + "\n\nReply:\n" + json.dumps(example_reply, indent=1)
+            + "\n\nFacts:\n" + json.dumps(facts, indent=1) + "\n\nReply:\n")
+
+
 def call_granite_local(facts):
     """Run Granite through llama.cpp on this machine and return its raw reply text.
 
-    The packaged model is a base (completion) model, not a chat model, so the prompt
-    ends with the opening brace of the JSON and the model continues it. Whatever it
-    produces goes through the same fact check as a watsonx reply.
+    The packaged model is a base (completion) model, not a chat model, so it gets one
+    worked example and a grammar that forces the reply shape. Whatever it produces goes
+    through the same fact check as a watsonx reply.
     """
     global _local_llm
-    from llama_cpp import Llama
+    import time
+    from llama_cpp import Llama, LlamaGrammar
 
     if _local_llm is None:
-        _local_llm = Llama(model_path=local_model_path(), n_ctx=int(os.environ.get("GRANITE_CTX", "2048")),
+        t0 = time.monotonic()
+        _local_llm = Llama(model_path=local_model_path(), n_ctx=int(os.environ.get("GRANITE_CTX", "4096")),
                            n_threads=int(os.environ.get("GRANITE_THREADS", "1")), verbose=False)
-    prompt = SYSTEM_PROMPT + "\n\nFacts:\n" + json.dumps(facts, indent=1) + "\n\nReply:\n{"
-    out = _local_llm(prompt, max_tokens=int(os.environ.get("GRANITE_MAX_TOKENS", "300")), temperature=0.0,
-                     stop=["\n\n\n", "Facts:"])
-    return "{" + out["choices"][0]["text"]
+        print("granite (local): model loaded in %.0f s from %s" % (time.monotonic() - t0, local_model_path()))
+    t0 = time.monotonic()
+    out = _local_llm(local_prompt(facts), max_tokens=int(os.environ.get("GRANITE_MAX_TOKENS", "260")),
+                     temperature=0.0, grammar=LlamaGrammar.from_string(REPLY_GRAMMAR, verbose=False))
+    text = out["choices"][0]["text"]
+    print("granite (local): %s in %.0f s, %d tokens" % (facts.get("ring_id"), time.monotonic() - t0,
+                                                         out.get("usage", {}).get("completion_tokens", 0)))
+    return text
 
 
 def build_messages(facts):
