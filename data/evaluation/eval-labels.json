@@ -1,0 +1,54 @@
+{
+ "labels": {
+  "rings": 398,
+  "transfers_in_rings": 2544,
+  "laundering_in_rings": 989,
+  "ring_transfer_precision": 0.38875786163522014,
+  "rings_mostly_laundering": 158,
+  "rings_without_laundering": 216,
+  "laundering_in_period": 1798,
+  "laundering_covered": 900,
+  "laundering_covered_share": 0.5005561735261401,
+  "core_precision": 0.606703146374829,
+  "expanded_precision": 0.09426987060998152,
+  "expanded_transfers": 1082,
+  "per_shape": {
+   "bipartite": {
+    "rings": 2,
+    "mean_precision": 0.23529411764705882
+   },
+   "cycle": {
+    "rings": 3,
+    "mean_precision": 0.6388888888888888
+   },
+   "fan-in": {
+    "rings": 224,
+    "mean_precision": 0.18236314949087226
+   },
+   "fan-out": {
+    "rings": 30,
+    "mean_precision": 0.8932509973686444
+   },
+   "gather-scatter": {
+    "rings": 10,
+    "mean_precision": 0.9277463369963369
+   },
+   "other": {
+    "rings": 122,
+    "mean_precision": 0.46888480372086916
+   },
+   "scatter-gather": {
+    "rings": 7,
+    "mean_precision": 0.9017006802721088
+   }
+  }
+ },
+ "meta": {
+  "rings_source": "redis stream 'rings'",
+  "ring_versions": 1179,
+  "since": null,
+  "until": null,
+  "patterns": null,
+  "labels": "/data/data/clean.csv"
+ }
+}

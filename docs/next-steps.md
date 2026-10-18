@@ -114,7 +114,7 @@ It prints: known attempts starting in the replayed period, how many a ring caugh
 
 Batch runs (not the live demo): run the replayer with `--maxlen 0` and the scorer with `--maxlen 0`, otherwise the stream caps trim messages that no consumer has read yet.
 
-Without the patterns file, `--labels clean.csv --models <models>` scores the rings against the labels. Measured on a laptop over the whole real test period with the real model (October 17):
+Without the patterns file, `--labels clean.csv --models <models>` scores the rings against the labels. Superseded on October 18 by the VM run with the committed model (`data/evaluation/evaluation-labels.md`: 398 rings, 39 % of ring transfers labelled laundering, 50 % of test-period laundering inside a ring, core precision 61 %; fan-in rings are the noise). The laptop figures below were measured with an earlier model (ring threshold 0.952) on October 17:
 
 | Against the labels | Value |
 |---|---|

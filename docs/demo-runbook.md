@@ -204,7 +204,7 @@ docker compose run --rm scorer python -m scripts.evaluate_rings --labels /data/d
 
 | | |
 |---|---|
-| Expected | Printed tables: attempts starting in the period, caught, covered, shape match, median minutes to alert, money still stoppable; the labels block (laptop run over the whole test period: 214 rings, 74 % of ring transfers labelled laundering, 55 % of test-period laundering inside some ring); the GNN sweep table. `~/shared/evaluation.md` holds the same numbers as a report |
+| Expected | Printed tables: attempts starting in the period, caught, covered, shape match, median minutes to alert, money still stoppable; the labels block (VM run of October 18 with the committed model: 398 rings, 39 % of ring transfers labelled laundering, 50 % of test-period laundering inside some ring; reports in `data/evaluation/`); the GNN sweep table. `~/shared/evaluation.md` holds the same numbers as a report |
 | Screenshot | `screenshots/12-evaluation.png` |
 | Judging point | Pitch numbers: catch rate, time to alert, money still stoppable |
 
