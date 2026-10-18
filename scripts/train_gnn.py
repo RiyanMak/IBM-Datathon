@@ -14,9 +14,9 @@ transfers. Writes models/gnn.npz and models/gnn_meta.json.
 
 "Success is honest numbers, not winning": the comparison is printed whichever way it goes.
 
-On a Mac, run it with KMP_DUPLICATE_LIB_OK=TRUE: PyTorch and XGBoost each bring their own
-OpenMP runtime there and crash otherwise. On Linux (the VM) this is not needed. XGBoost is
-imported before torch on purpose, the only order that works on a Mac.
+Run it on the LinuxONE VM, inside the compose image (see docs/next-steps.md). On a Mac,
+XGBoost and PyTorch bring two OpenMP runtimes and a full-size run deadlocks; do not use a
+Mac for this.
 """
 
 import argparse

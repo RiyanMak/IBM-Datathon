@@ -20,6 +20,8 @@ ssh -L 8501:localhost:8501 linux1@<vm-ip>         # from your laptop, then open 
 
 `docker compose --profile replay ps` lists all six containers; `docker compose up -d --scale scorer=3` runs three scorers on one queue. Each service has a README in `services/<name>/`.
 
+Tests, GNN training and the ring evaluation also run on the VM inside the same image, for example `docker compose run --rm --no-deps scorer python -m pytest -q`; the full list is in `docs/next-steps.md`, section 5c.
+
 ## Data cleaning
 
 The cleaning pipeline turns `HI-Small_Trans.csv` into one typed, time-sorted table and a few reports. It never edits the raw file and never auto-fixes data: if something breaks the data contract, the run stops with exit code 1 and explains why in `data_quality.md`.

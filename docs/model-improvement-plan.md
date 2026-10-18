@@ -9,7 +9,7 @@ Written October 17, 2026, late evening. Read this with `docs/next-steps.md` (pip
 - Rings on the real test period (laptop, real model): 214 rings, median 5 accounts; 74 % of ring transfers are labelled laundering; 55 % of all test-period laundering sits in a ring; core transfers 84 % precise, expanded ones 46 % (base rate at that score 9 %); scatter-gather and gather-scatter rings 90 to 96 % precise, fan-in 48 %.
 - Two GNNs exist: the teammate's `services/gnn` (Rescorer class, two-hop seven-day neighbourhood from clean.csv, trained weights committed) and ours `common/gnn.py` + `scripts/train_gnn.py` (window-only subgraph, loaded by the ring service when `gnn.npz` exists). The team must pick one for the ring service; the ring service already has the hook. Our training run on the real data was still running when this was written; its numbers are not recorded anywhere yet.
 - Not on the laptop yet: `HI-Small_Patterns.txt` (download from the Kaggle page to `~/Downloads`). The ring-level evaluation against known attempts needs it; the label-based evaluation works without it.
-- Mac-only quirk: PyTorch and XGBoost crash in one process unless XGBoost is imported first and `KMP_DUPLICATE_LIB_OK=TRUE` is set. Run the suite as two processes (see `docs/next-steps.md`). The VM is unaffected.
+- Run training, the test suite and the evaluations on the VM inside the compose image (`docs/next-steps.md`, section 5c). A Mac deadlocks on full-size runs because PyTorch and XGBoost bring two OpenMP runtimes; laptops are for editing code.
 
 ## What the research found that changes the framing
 
