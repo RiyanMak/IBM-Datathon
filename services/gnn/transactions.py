@@ -51,7 +51,9 @@ def _find(df: pd.DataFrame, ours: str) -> Optional[str]:
     return None
 
 
-_EPOCH = pd.Timestamp(0, tz="UTC")
+# Naive, not tz-aware: building a timezone-aware index segfaults in pandas on s390x,
+# and every timestamp in this project is UTC-naive text anyway.
+_EPOCH = pd.Timestamp(0)
 
 
 def _to_epoch_seconds(series: pd.Series) -> np.ndarray:
@@ -63,7 +65,9 @@ def _to_epoch_seconds(series: pd.Series) -> np.ndarray:
             raise ValueError("timestamp column has missing values")
         return vals / 1000.0 if np.median(vals) > 4e10 else vals   # milliseconds?
     if pd.api.types.is_datetime64_any_dtype(series):
-        dt = pd.to_datetime(series, utc=True)
+        dt = pd.to_datetime(series)
+        if getattr(dt.dt, "tz", None) is not None:
+            dt = dt.dt.tz_convert("UTC").dt.tz_localize(None)
     else:
         s = series.astype(str).str.strip().str.replace("Z", "", regex=False)
         first = s.iloc[0] if len(s) else ""
@@ -73,11 +77,11 @@ def _to_epoch_seconds(series: pd.Series) -> np.ndarray:
             s = s.str.replace("/", "-", regex=False)
         # Covers the raw file (after the replace), clean.csv's "2022-09-01T00:20:00"
         # and the "2022-09-01" midnights that older clean.csv files have.
-        dt = pd.to_datetime(s, format="ISO8601", errors="coerce", utc=True)
+        dt = pd.to_datetime(s, format="ISO8601", errors="coerce")
         bad = dt.isna()
         if bad.any():
             dt = dt.copy()
-            dt[bad] = pd.to_datetime(s[bad], errors="coerce", utc=True, format="mixed")
+            dt[bad] = pd.to_datetime(s[bad], errors="coerce", format="mixed")
     bad = dt.isna()
     if bad.any():
         examples = series[bad.to_numpy()].head(3).tolist()
