@@ -1,6 +1,6 @@
 # Model improvement plan (hand-off for a fresh session)
 
-Written October 17, 2026, late evening. Read this with `docs/next-steps.md` (pipeline status) and the research report at `/Users/riyanmaknojia/projects/IBM-Datathon-research/reports/HI Small AML model training.md` (outside the repo on purpose).
+Written October 17, 2026, late evening. Read this with `docs/next-steps.md` (pipeline status) and the research report at `docs/research-model-training.md` (outside the repo on purpose).
 
 ## Where things stand
 
