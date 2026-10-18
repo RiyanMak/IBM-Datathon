@@ -24,6 +24,8 @@ Everything here runs in seven containers on an IBM LinuxONE (s390x) virtual mach
 - [Honest limits and what is not built](#honest-limits-and-what-is-not-built)
 - [Platform notes for LinuxONE](#platform-notes-for-linuxone)
 - [Documentation index](#documentation-index)
+- [Team](#team)
+- [Research this builds on](#research-this-builds-on)
 - [Dataset](#dataset)
 - [Libraries](#libraries)
 
@@ -369,6 +371,30 @@ Things discovered on the s390x VM that the code and the Dockerfile now handle:
 | `docs/Mule_Ring_Hunter_Laptop_Cleaning_Plan.md` | the cleaning pipeline's plan |
 | `docs/teamguide.pdf` | the team's helper guide: the six-step pipeline, hand-offs between steps, links |
 | `services/<name>/README.md` | each service's contract, options and laptop commands |
+
+## Team
+
+Team DevMaxx, IBM Z Datathon 2026. Everything in this repository was written during the event.
+
+| Contributor | Worked on |
+|---|---|
+| [Riyan Maknojia](https://github.com/RiyanMak) | cleaning pipeline, the clue class, scorer, ring service and the GNN second opinion, training and evaluation scripts, Dockerfile and compose, the VM runs and the hand-off docs |
+| Anirudh Vayalali | investigator page logic and views, the case writer, the replayer |
+| [Aryan Sanojraj](https://github.com/SJAryan) | reviewer bot: Slack and console adapters, suppression, decisions, the case packet, the demo runbook |
+| [Kevin](https://github.com/Kevin-A101) | the page's IBM Carbon redesign: theme, step rail, the flow component and its play-through |
+| [Ayan Prasla](https://github.com/Ap9801) | the stand-alone GNN ring re-scorer in `services/gnn/`, the case writer's wording and its contract with the other steps |
+
+Thanks to the IBM Z Datathon organisers and the LinuxONE Community Cloud team for the VM and the s390x Jupyter image this runs on.
+
+## Research this builds on
+
+The dataset, the evaluation protocol and several design choices come from IBM Research's work on anti-money-laundering, which is also where the published baselines we compare against come from.
+
+- **Altman, Blanuša, von Niederhäusern, Egressy, Anghel, Atasu. [Realistic Synthetic Financial Transactions for Anti-Money Laundering Models](https://arxiv.org/abs/2306.16424). NeurIPS 2023, Datasets and Benchmarks.** The paper behind HI-Small and the AMLworld simulator: the eight laundering typologies, the transitive labelling of forwarded money, the temporal 60/20/20 protocol we follow, and the rule of computing features in timestamp order so nothing from the future leaks in. Its XGBoost results are the reference our F1 0.63 is compared with.
+- **Egressy, von Niederhäusern, Blanuša, Altman, Wattenhofer, Atasu. [Provably Powerful Graph Neural Networks for Directed Multigraphs](https://arxiv.org/abs/2306.11586). AAAI 2024 ([code](https://github.com/IBM/Multi-GNN)).** The Multi-GNN work: reverse message passing is the adaptation that matters most on this data, which is why our GNN gathers incoming and outgoing transfers separately. Its per-pattern recall table is the shape of our evaluation by shape.
+- **Blanuša, Cravero Baraja, Anghel, von Niederhäusern, Altman, Pozidis, Atasu. [Graph Feature Preprocessor: Real-time Subgraph-based Feature Extraction for Financial Machine Learning](https://arxiv.org/abs/2402.08593). 2024.** IBM's Snap ML preprocessor and its ablation on HI-Small: fan-in and fan-out counts, 2-cycles and scatter-gather over a six-hour window, and vertex statistics, in that order of value. Our clues are a causal, past-24-hour version of the same families, and the ring service's shape rules follow its pattern definitions.
+
+Other work that shaped specific decisions: Deprez et al., [Network Analytics for Anti-Money Laundering](https://arxiv.org/abs/2405.19383) (why plain GNNs struggle on this data: short paths and high-degree hubs, which is behind our hub rule); Naser Eddin et al., [Anti-Money Laundering Alert Optimization Using Machine Learning with Graphs](https://arxiv.org/abs/2112.07508) (neighbourhood and "distance to illicit" features at a real bank, the idea behind the taint experiment); Elor and Averbuch-Elor, [To SMOTE, or not to SMOTE?](https://arxiv.org/abs/2201.08528) and the threshold-calibration studies cited in `docs/research-model-training.md` (why we choose thresholds on validation instead of resampling); Kaufman, Rosset and Perlich, [Leakage in Data Mining](https://www.cs.umb.edu/~ding/history/470_670_fall_2011/papers/cs670_Tran_PreferredPaper_LeakingInDataMining.pdf) (the leakage discipline the clue class and the leakage test enforce). The full reading, with the published score table for HI-Small, is in `docs/research-model-training.md`.
 
 ## Dataset
 
