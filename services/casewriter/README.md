@@ -137,6 +137,15 @@ Paste this in the team chat so Pair 2 (rings) and Pair 3 (page) build to the sam
 
 I couldn't test the real Granite connection from here, only the request format. Step 6 is where you find out whether it works.
 
+## Step 6b: When Granite writes (`GRANITE_MODE`)
+
+Every ring gets the template case within a second of arriving. Granite is slower (a few seconds a call) and a replay produces far more ring versions than one worker can keep up with, so by default Granite writes **on demand**:
+
+- `GRANITE_MODE=on_demand` (default): the page writes a message on the `granite_requests` stream (`ring_id`, `version`, `requested_at`, `requested_by`) when an investigator opens a ring whose newest case is still the template. The case writer serves requests ahead of everything else on `GRANITE_WORKERS` threads (default 3), and keeps that ring's new versions on the fast path for three minutes. Template cases carry `check_note = granite on request` until then and `granite pending` once queued; the page shows the computed observations meanwhile.
+- `GRANITE_MODE=all`: the same, plus every other ring in the background after the requested ones (the old behaviour; fine for a slow feed, minutes behind during a replay).
+
+A request for a ring whose newest case already has Granite's text is ignored, so the page can ask freely (it asks at most once per ring version per 45 s). After a restart the case writer finds a requested ring on the `rings` stream, so requests work with an empty memory too.
+
 ## Step 7: Run it on the VM with Redis (once Pair 3 has Redis up)
 
 On the LinuxONE VM, at the repo root:
