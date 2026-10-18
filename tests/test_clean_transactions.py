@@ -44,10 +44,6 @@ def make_row(i, ts="2022/09/01 00:00", from_bank="010", from_acct=None,
     return f"{ts},{from_bank},{from_acct},{to_bank},{to_acct},{amt},US Dollar,{amt},US Dollar,ACH,{label}"
 
 
-def checks_found(problems):
-    return {(p["check"], p["column"]) for p in problems}
-
-
 def bad_rows(problems, check, column):
     for p in problems:
         if p["check"] == check and p["column"] == column:

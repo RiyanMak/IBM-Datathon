@@ -21,7 +21,7 @@ from typing import Callable, Dict, List, Optional
 
 from common import bus
 from services.page.models import (
-    CaseView, Counters, DecisionView, Edge, PageState, RingView, SummaryPart,
+    CaseView, DecisionView, Edge, PageState, RingView, SummaryPart,
     normalise_shape, part_label,
 )
 
