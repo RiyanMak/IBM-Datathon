@@ -342,6 +342,42 @@ def test_run_end_to_end_and_the_case_writer_and_page_read_the_result():
         assert view.reasons == ["paid by ACH"]
 
 
+def test_gnn_second_opinion_when_a_model_is_present(tmp_path):
+    torch = pytest.importorskip("torch")
+    from common.features import FEATURE_NAMES
+    from common.gnn import build_graph, make_model, save_model
+
+    # a tiny untrained model is enough to prove the plumbing: a number in 0..1 appears
+    model = make_model(len(FEATURE_NAMES) + 2)
+    save_model(model, {"gnn_threshold": 0.5, "expand_threshold": 0.5}, tmp_path)
+    (tmp_path / "thresholds.json").write_text(json.dumps({"alert": 0.9, "ring": 0.5}))
+
+    clues = json.dumps({name: 0.1 for name in FEATURE_NAMES})
+    r = fake_redis()
+    for i, spec in enumerate([("A", "B"), ("B", "C"), ("C", "A"), ("A", "D")]):
+        m = scored(spec[0], spec[1], 0.8, i)
+        m["clues"] = clues
+        r.xadd(bus.SCORED, m)
+    service = main(["--models", str(tmp_path), "--once", "--consumer", "t"], r=r)
+    assert service.gnn is not None and service.stats["gnn_scored"] == 1
+    f = [f for _, f in r.xrange(bus.RINGS, "-", "+")][0]
+    assert 0.0 <= float(f["gnn_score"]) <= 1.0
+    assert f["xgb_score"] == "0.8000"
+
+    # without clues in the messages, or with --no-gnn, the field stays empty
+    r2 = fake_redis()
+    for i, spec in enumerate([("A", "B"), ("B", "C"), ("C", "A")]):
+        r2.xadd(bus.SCORED, scored(spec[0], spec[1], 0.8, i))
+    main(["--models", str(tmp_path), "--once", "--consumer", "t"], r=r2)
+    assert [f for _, f in r2.xrange(bus.RINGS, "-", "+")][0]["gnn_score"] == ""
+    r3 = fake_redis()
+    for i, spec in enumerate([("A", "B"), ("B", "C"), ("C", "A")]):
+        m = scored(spec[0], spec[1], 0.8, i); m["clues"] = clues
+        r3.xadd(bus.SCORED, m)
+    service = main(["--models", str(tmp_path), "--once", "--consumer", "t", "--no-gnn"], r=r3)
+    assert service.gnn is None and [f for _, f in r3.xrange(bus.RINGS, "-", "+")][0]["gnn_score"] == ""
+
+
 def test_main_with_fake_redis_and_a_thresholds_file(tmp_path):
     r = fake_redis()
     (tmp_path / "thresholds.json").write_text(json.dumps({"alert": 0.9, "ring": 0.5}))
