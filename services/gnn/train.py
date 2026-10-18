@@ -43,9 +43,17 @@ def pick_seeds(df, threshold: float, rng: np.random.Generator, max_seeds: int):
     return rows[:max_seeds], how
 
 
-def batches_of(arr, size):
-    for i in range(0, len(arr), size):
-        yield arr[i:i + size]
+def time_batches(index: TxnIndex, seed_rows, size, window_hours):
+    """Seeds grouped into batches of up to `size` that all fall inside one
+    window, so each batch's subgraph spans one window like at inference."""
+    ts = index.ts
+    seeds = np.sort(np.asarray(seed_rows))           # rows are in time order
+    out, start = [], 0
+    for i in range(1, len(seeds) + 1):
+        if i == len(seeds) or i - start == size or ts[seeds[i]] - ts[seeds[start]] > window_hours * 3600.0:
+            out.append(seeds[start:i])
+            start = i
+    return out
 
 
 def subgraph_for_seeds(index: TxnIndex, seed_rows, hops, window_hours, max_edges, rng):
@@ -75,7 +83,7 @@ def evaluate(model, index, seed_rows, args, rng):
     ys, ps = [], []
     model.eval()
     with torch.no_grad():
-        for batch in batches_of(seed_rows, args.seeds_per_batch):
+        for batch in time_batches(index, seed_rows, args.seeds_per_batch, args.window_hours):
             g = subgraph_for_seeds(index, batch, args.hops, args.window_hours, args.max_edges, rng)
             ps.append(torch.sigmoid(model(g)).numpy()); ys.append(g.labels.numpy())
     if not ys:
@@ -127,8 +135,10 @@ def main(argv=None):
     val_seeds = val_seeds + n_train
     print(f"  seeds: {len(train_seeds):,} train, {len(val_seeds):,} val, chosen by {how}")
 
+    train_batches = time_batches(index, train_seeds, args.seeds_per_batch, args.window_hours)
     pos = neg = 0
-    for batch in batches_of(train_seeds[:args.seeds_per_batch * 8], args.seeds_per_batch):
+    for i in rng.choice(len(train_batches), size=min(8, len(train_batches)), replace=False):
+        batch = train_batches[i]
         g = subgraph_for_seeds(index, batch, args.hops, args.window_hours, args.max_edges, rng)
         pos += int(g.labels.sum()); neg += int(len(g.labels) - g.labels.sum())
     pos_weight = min(max(neg / max(pos, 1), 1.0), 50.0)
@@ -141,9 +151,9 @@ def main(argv=None):
     history = []
     for epoch in range(1, args.epochs + 1):
         model.train()
-        rng.shuffle(train_seeds)
+        order = rng.permutation(len(train_batches))   # shuffle batches, keep each one in one window
         losses = []
-        for batch in batches_of(train_seeds, args.seeds_per_batch):
+        for batch in (train_batches[i] for i in order):
             g = subgraph_for_seeds(index, batch, args.hops, args.window_hours, args.max_edges, rng)
             opt.zero_grad()
             loss = loss_fn(model(g), g.labels)

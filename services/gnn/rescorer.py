@@ -185,8 +185,16 @@ class Rescorer:
         transfers = self.index.rows_to_transfers(rows) if len(rows) else []
         present = {t["txn_id"] for t in transfers}
         for e in ring_edges:
-            if e["txn_id"] not in present:
+            if e["txn_id"] in present:
+                continue
+            row = self.index.by_txn.get(e["txn_id"])
+            if row is not None:
+                # Dropped by the edge cap or the window: use the indexed row,
+                # which has the currencies and format the bare edge lacks.
+                transfers.extend(self.index.rows_to_transfers([row]))
+            else:
                 transfers.append(dict(e))
+            present.add(e["txn_id"])
         for t in transfers:               # never let labels leak into scoring
             t.pop("label", None)
         return transfers
@@ -281,16 +289,22 @@ def run_service(rs: Rescorer, in_stream: str, out_stream: str, drop: bool, redis
                 handled += 1
                 try:
                     scored = rs.rescore(parse_stream_ring(fields))
+                except Exception as e:          # a bad message: retrying won't help, so ack it
+                    print(f"skipped bad ring message {msg_id}: {e}", file=sys.stderr)
+                    r.hincrby("stats:gnn", "bad", 1)
+                    r.xack(in_stream, GROUP, msg_id)
+                    continue
+                try:
                     if scored["gnn_kept"] or not drop:
                         r.xadd(out_stream, ring_to_stream_fields(scored))
-                    r.hincrby("stats:gnn", "scored", 1)
-                    r.hincrby("stats:gnn", "kept" if scored["gnn_kept"] else "dropped", 1)
-                    print(f"{scored.get('ring_id')} v{scored.get('version', '?')}: gnn {scored['gnn_score']} "
-                          f"{'kept' if scored['gnn_kept'] else 'dropped'}", file=sys.stderr)
-                except Exception as e:          # keep the loop alive on a bad message
-                    print(f"skipped bad ring message {msg_id}: {e}", file=sys.stderr)
-                finally:
-                    r.xack(in_stream, GROUP, msg_id)
+                except Exception as e:          # Redis trouble: leave it pending, don't lose the ring
+                    print(f"could not forward ring message {msg_id}, left unacked: {e}", file=sys.stderr)
+                    continue
+                r.xack(in_stream, GROUP, msg_id)
+                r.hincrby("stats:gnn", "scored", 1)
+                r.hincrby("stats:gnn", "kept" if scored["gnn_kept"] else "dropped", 1)
+                print(f"{scored.get('ring_id')} v{scored.get('version', '?')}: gnn {scored['gnn_score']} "
+                      f"{'kept' if scored['gnn_kept'] else 'dropped'}", file=sys.stderr)
     return handled
 
 

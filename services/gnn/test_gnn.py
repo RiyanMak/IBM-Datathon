@@ -68,6 +68,49 @@ def test_raw_csv_loads_with_team_account_ids_and_splits_by_time():
     assert tr["ts"].max() <= va["ts"].min() <= va["ts"].max() <= te["ts"].min(), "split leaks time"
 
 
+def _write_csv(name, text):
+    path = os.path.join(TMP, name)
+    with open(path, "w") as f:
+        f.write(text)
+    return path
+
+
+def test_clean_csv_timestamps_load_as_epoch_seconds():
+    path = _write_csv("clean_ts.csv",
+                      "txn_id,ts,from_acct,to_acct,amount_usd\n"
+                      "0,2022-09-01,1_A,2_B,10\n"                      # older files' midnight form
+                      "1,2022-09-08T14:00:00,2_B,3_C,20\n")
+    df = load_transactions(path)
+    assert df["ts"].tolist() == [parse_ts("2022-09-01T00:00:00"), 1662645600.0]
+
+
+def test_unparseable_timestamp_is_an_error_not_year_1677():
+    path = _write_csv("bad_ts.csv", "txn_id,ts,from_acct,to_acct,amount_usd\n0,not-a-time,1_A,2_B,10\n")
+    try:
+        load_transactions(path)
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError")
+
+
+def test_raw_csv_txn_ids_follow_time_order_like_the_cleaning_script():
+    path = _write_csv("raw_order.csv",
+                      "Timestamp,From Bank,Account,To Bank,Account.1,Amount Paid\n"
+                      "2022/09/01 00:20,010,A,020,B,1\n"
+                      "2022/09/01 00:05,010,C,020,D,2\n")
+    df = load_transactions(path)
+    assert df["txn_id"].tolist() == ["0", "1"] and df["amount_paid"].tolist() == [2.0, 1.0]
+
+
+def test_missing_timestamp_is_an_error_not_1970():
+    for value in (None, ""):
+        try:
+            parse_ts(value)
+        except ValueError:
+            continue
+        raise AssertionError(f"parse_ts({value!r}) should raise")
+
+
 def test_timestamps_in_all_formats_agree():
     a = parse_ts("2022-09-03T10:00:00"); b = parse_ts("2022/09/03 10:00"); c = parse_ts(a)
     assert a == b == c
@@ -213,6 +256,28 @@ def test_service_mode_forwards_kept_rings_on_a_fake_redis():
     assert fields["gnn_score"] != "" and float(fields["gnn_score"]) >= 0.5
     assert json.loads(fields["edges"])[0]["from"]
     assert r.hget("stats:gnn", "scored") == "6"
+
+
+def test_service_mode_leaves_a_ring_pending_when_forwarding_fails():
+    try:
+        import fakeredis
+    except ImportError:
+        import pytest
+        pytest.skip("fakeredis not installed (pip install -r requirements-dev.txt)")
+
+    class BrokenOutput(fakeredis.FakeRedis):
+        def xadd(self, name, *a, **kw):
+            if name == "rings":
+                raise ConnectionError("redis went away")
+            return super().xadd(name, *a, **kw)
+
+    r = BrokenOutput(decode_responses=True)
+    _fake()
+    ring = json.load(open(os.path.join(FAKE, "fake_rings.json")))[0]
+    r.xadd("candidates", ring_to_stream_fields(ring))
+    rs = Rescorer(_weights(), txn_index=None, quiet=True)
+    run_service(rs, "candidates", "rings", drop=False, redis_client=r, max_messages=1)
+    assert r.xpending("candidates", "gnn")["pending"] == 1
 
 
 # ---- plain runner -----------------------------------------------------------

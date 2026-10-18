@@ -17,6 +17,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import torch
 
+from common.streams import TS_FORMAT_ISO
+
 # Order matters: the model is trained on these exact columns.
 EDGE_FEATURES = [
     "log_amount",        # log(1 + amount in USD)
@@ -43,8 +45,9 @@ NODE_FEATURES = [
 
 def parse_ts(value) -> float:
     """Seconds since epoch for '2022-09-08T14:00:00', '2022/09/08 14:00', or a number."""
-    if value is None:
-        return 0.0
+    if value is None or value == "":
+        # 0.0 would be read as 1970 and wreck hours_since_start for the subgraph.
+        raise ValueError("transfer has no timestamp")
     if isinstance(value, (int, float)):
         return float(value)
     if hasattr(value, "timestamp"):             # datetime / pandas Timestamp
@@ -68,7 +71,7 @@ def parse_ts(value) -> float:
 
 def to_iso(seconds: float) -> str:
     """Epoch seconds -> the team's data-time text '2022-09-08T14:00:00'."""
-    return datetime.fromtimestamp(float(seconds), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return datetime.fromtimestamp(float(seconds), tz=timezone.utc).strftime(TS_FORMAT_ISO)
 
 
 def bank_of(account_id: str) -> str:

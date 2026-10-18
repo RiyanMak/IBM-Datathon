@@ -14,6 +14,8 @@ from typing import Dict, Iterable, List, Optional, Set
 import numpy as np
 import pandas as pd
 
+from common.data_contract import canonical_bank
+
 # Our name -> the names other files might use for the same column.
 COLUMN_ALIASES: Dict[str, List[str]] = {
     "ts":          ["ts", "timestamp", "Timestamp", "time", "datetime"],
@@ -42,12 +44,6 @@ _ID_COLUMNS = {n for k in ("from", "to", "from_bank", "from_raw", "to_bank", "to
                for n in COLUMN_ALIASES[k]}
 
 
-def canonical_bank(raw: str) -> str:
-    """Same rule as common/data_contract.py: strip leading zeros, '000' -> '0'."""
-    s = str(raw).strip().lstrip("0")
-    return s if s else "0"
-
-
 def _find(df: pd.DataFrame, ours: str) -> Optional[str]:
     for name in COLUMN_ALIASES[ours]:
         if name in df.columns:
@@ -55,26 +51,39 @@ def _find(df: pd.DataFrame, ours: str) -> Optional[str]:
     return None
 
 
+_EPOCH = pd.Timestamp(0, tz="UTC")
+
+
 def _to_epoch_seconds(series: pd.Series) -> np.ndarray:
-    if np.issubdtype(series.dtype, np.number):
+    # pandas.api.types, not np.issubdtype: pandas 3 reads text as StringDtype,
+    # which numpy cannot interpret.
+    if pd.api.types.is_numeric_dtype(series):
         vals = series.astype("float64").to_numpy()
-        return vals / 1000.0 if np.nanmedian(vals) > 4e10 else vals   # milliseconds?
-    if np.issubdtype(series.dtype, np.datetime64):
+        if np.isnan(vals).any():
+            raise ValueError("timestamp column has missing values")
+        return vals / 1000.0 if np.median(vals) > 4e10 else vals   # milliseconds?
+    if pd.api.types.is_datetime64_any_dtype(series):
         dt = pd.to_datetime(series, utc=True)
     else:
         s = series.astype(str).str.strip().str.replace("Z", "", regex=False)
         first = s.iloc[0] if len(s) else ""
-        if re.match(r"^\d{4}-\d{2}-\d{2}T", first):
-            dt = pd.to_datetime(s, format="%Y-%m-%dT%H:%M:%S", errors="coerce", utc=True)
-        elif re.match(r"^\d{4}/\d{2}/\d{2} ", first):
+        if re.match(r"^\d{4}/\d{2}/\d{2} ", first):     # raw Kaggle file
             dt = pd.to_datetime(s, format="%Y/%m/%d %H:%M", errors="coerce", utc=True)
         else:
-            dt = pd.to_datetime(s, errors="coerce", utc=True)
+            # Covers clean.csv's "2022-09-01T00:20:00" and the "2022-09-01"
+            # midnights that older clean.csv files have.
+            dt = pd.to_datetime(s, format="ISO8601", errors="coerce", utc=True)
         bad = dt.isna()
         if bad.any():
             dt = dt.copy()
             dt[bad] = pd.to_datetime(s[bad], errors="coerce", utc=True, format="mixed")
-    return (dt.astype("int64") // 10**9).to_numpy().astype("float64")
+    bad = dt.isna()
+    if bad.any():
+        examples = series[bad.to_numpy()].head(3).tolist()
+        raise ValueError(f"{int(bad.sum())} timestamps could not be parsed, e.g. {examples}")
+    # Subtracting the epoch works at any resolution; pandas 3 parses text at
+    # microseconds, so casting to int64 and dividing by 1e9 would be 1000x off.
+    return ((dt - _EPOCH) / pd.Timedelta(seconds=1)).to_numpy().astype("float64")
 
 
 def load_transactions(path: str, nrows: Optional[int] = None) -> pd.DataFrame:
@@ -134,11 +143,12 @@ def load_transactions(path: str, nrows: Optional[int] = None) -> pd.DataFrame:
     tid = _find(df, "txn_id")
     if tid:
         out["txn_id"] = df[tid].astype(str)
-    else:
-        # Row number in the original file order, like the cleaning script's txn_id.
-        out["txn_id"] = [str(i) for i in range(len(df))]
 
+    # Stable sort = by (ts, original row), the same order the cleaning script uses.
     out = out.sort_values("ts", kind="stable").reset_index(drop=True)
+    if not tid:
+        # Position after that sort, like common/clean_transactions.sort_and_assign_ids.
+        out["txn_id"] = [str(i) for i in range(len(out))]
     return out[OUTPUT_COLUMNS]
 
 
