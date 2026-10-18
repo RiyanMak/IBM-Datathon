@@ -85,3 +85,12 @@ def test_granite_label_requires_an_actual_passing_check():
     assert not replace(c, check_note="granite not used").fact_checked
     assert replace(c, check_note="passed fact check").fact_checked
     assert "fact check passed" in ws.provenance(replace(c, check_note="passed fact check"))
+
+
+def test_origin_and_endpoint_roles_are_inferred_from_drawn_transfers():
+    chain = [Edge("1", "A", "B", 10, "2022-01-01T01:00", .5), Edge("2", "B", "C", 10, "2022-01-01T02:00", .5)]
+    found = {n["id"]: n["role"] for n in ws.graph_data(ring(chain))["nodes"]}
+    assert found == {"A": "origin", "B": "", "C": "endpoint"}
+    cycle = chain + [Edge("3", "C", "A", 10, "2022-01-01T03:00", .5)]
+    assert ws.roles(["A", "B", "C"], cycle) == {"A": "origin"}
+    assert ws.roles(["A", "B"], [Edge("s", "A", "A", 1, "", None)]) == {}

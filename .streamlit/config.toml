@@ -1,0 +1,36 @@
+# One coherent default theme for the investigator page. Dark tokens still apply when a
+# viewer switches theme from the Streamlit menu; the page never follows the OS automatically.
+[theme]
+base = "light"
+primaryColor = "#2E5BFF"
+backgroundColor = "#F6F7F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0E1420"
+linkColor = "#2E5BFF"
+borderColor = "#E3E6EC"
+baseRadius = "0.6rem"
+buttonRadius = "0.6rem"
+font = "system-ui, sans-serif"
+headingFont = "system-ui, sans-serif"
+showSidebarBorder = false
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
+
+# The same palette for viewers whose system prefers dark, so everyone sees one deliberate
+# design. Remove this section to let Streamlit's built-in dark base apply instead; the page's
+# own dark tokens (ui.DARK_TOKENS) then take over.
+[theme.dark]
+primaryColor = "#2E5BFF"
+backgroundColor = "#F6F7F9"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0E1420"
+linkColor = "#2E5BFF"
+borderColor = "#E3E6EC"
+baseRadius = "0.6rem"
+buttonRadius = "0.6rem"
+font = "system-ui, sans-serif"
+headingFont = "system-ui, sans-serif"

@@ -17,7 +17,10 @@ Design and reasons: `docs/investigator-page-plan.md`. Known limits and ideas: `d
 | `flow_component/` | Local SVG graph with linked mouse/keyboard selection, zoom and fit | No |
 | `decisions.py` | Validates and writes a decision | No |
 | `fmt.py` | Display text: numbers, times, top-bar tiles, facts rows, Markdown escaping | No |
-| `app.py` | The Streamlit page. The only file that imports Streamlit | Yes |
+| `app.py` | Entry point: theme frame, brand mark, top navigation | Yes |
+| `ui.py` | Shared Streamlit helpers: snapshot, theme, case bar, step rail, motion | Yes |
+| `views/` | One script per page: overview, cases, investigate, evidence, decide, status | Yes |
+| `styles.css`, `motion.js`, `assets/` | Semantic tokens, reveal/page transitions, brand SVGs | No |
 | `test_*.py` | Tests; they build their own messages and never use `fake/` | |
 | `fake/` | Fake feed for running the page alone. Delete once the real stack runs | |
 
@@ -53,13 +56,22 @@ Start over with `python -m services.page.fake.feed --reset --decisions` (it refu
 
 ## Rules for anyone adding to the page
 
-1. Logic goes in the modules without Streamlit; `app.py` only lays things out. That keeps the Flask fallback a view rewrite.
+1. Logic goes in the modules without Streamlit; `app.py`, `ui.py` and `views/` only lay things out. That keeps the Flask fallback a view rewrite.
 2. Every piece of data shown through `st.markdown`, captions, radio labels or badges goes through `fmt.md()`. Two dollar amounts in one line otherwise render as maths.
 3. New data source: add a reader to `state.READERS` and a panel in `app.py`. Nothing else changes.
 4. The decision form stays outside the live fragments, so a refresh never wipes what someone is typing.
 5. Nothing outside `fake/` imports from `fake/`.
 
 ## Investigation workspace (UI refresh)
+
+The application is one frame with one page per step, reached from the top navigation:
+**Overview** (purpose, live status, pipeline), **Cases** (01), **Investigate** (02),
+**Evidence** (03), **Decide** (04) and **System status** (diagnostics). The step rail and
+the case context bar keep the selected case consistent across pages. The theme is pinned in
+`.streamlit/config.toml` (light palette, cobalt accent, coral origin, green final recipient)
+for every viewer; remove `[theme.dark]` there to let Streamlit's dark base and the page's own
+dark tokens apply. Motion is limited to reveal-on-scroll on the overview, a short page
+transition, and state transitions; all of it is disabled under `prefers-reduced-motion`.
 
 The main path is **choose a case → select an account or transfer → review evidence → record a decision**.
 The default queue sorts by model score and holds its order until **Update queue** is clicked.
@@ -95,6 +107,9 @@ real customer data without first adding a trustworthy data-provenance contract.
 - The local SVG component in `flow_component/` has no CDN, build step, or JavaScript dependency.
   Graph click/Enter/Space and the native inspection list share canonical selection keys. Short
   graph labels never become identity. The list also exposes transfers outside the graph limit.
+- The graph marks the inferred **origin** (sends, never receives; the earliest sender in a pure
+  cycle) in coral and the inferred **final recipient** (receives, never sends on) in green. Roles come
+  from the drawn transfers only; self-transfers never define a role. The legend says they are inferred.
 - The graph draws at most 36 accounts and 60 transfers, prioritizing a selected item and large
   transfers. The scope is always visible. It preserves positions and zoom within the current
   case; **Fit view** resets zoom. The transfer list is paginated at 12 rows.

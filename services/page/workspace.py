@@ -152,9 +152,11 @@ def graph_data(ring, selection="overview", positions=None):
                   e.src, e.dst, graph.money(e.amount_usd), fmt.data_time(e.ts))}
              for k, e in chosen]
     height = max([360] + [saved[a][1] + 64 for a in nodes])
+    node_roles = roles(nodes, [e for _, e in chosen])
     return {
         "nodes": [{"id": a, "label": "A%02d" % (all_accounts.index(a) + 1),
                    "short": a if len(a) <= 15 else a[:6] + "…" + a[-6:],
+                   "role": node_roles.get(a, ""),
                    "x": saved[a][0], "y": saved[a][1]} for a in nodes],
         "edges": links, "selection": selection, "width": 960, "height": height,
         "positions": saved,
@@ -162,6 +164,23 @@ def graph_data(ring, selection="overview", positions=None):
             len(nodes), len(all_accounts), len(chosen), len(all_rows)),
         "limited": len(nodes) < len(all_accounts) or len(chosen) < len(all_rows),
     }
+
+
+def roles(nodes, edges):
+    """Inferred flow roles from the drawn transfers: where money enters and where it ends.
+
+    An origin sends but never receives within the case. A final recipient receives but
+    never sends on. A pure cycle has neither, so the earliest sender becomes the origin.
+    Self-transfers never define a role. These are inferences, not dataset facts.
+    """
+    flows = [e for e in edges if e.src != e.dst and e.src in nodes and e.dst in nodes]
+    senders = {e.src for e in flows}
+    receivers = {e.dst for e in flows}
+    found = {a: "origin" for a in nodes if a in senders and a not in receivers}
+    found.update({a: "endpoint" for a in nodes if a in receivers and a not in senders})
+    if flows and not any(role == "origin" for role in found.values()):
+        found[min(flows, key=lambda e: (e.ts, e.src)).src] = "origin"
+    return found
 
 
 def layout(nodes, edges):

@@ -8,11 +8,17 @@
 </head>
 <body>
   <div class="toolbar" aria-label="Graph controls">
-    <span class="legend"><span class="legend-node"></span> Account <span class="legend-arrow">→</span> Transfer <span class="legend-selected"></span> Selected</span>
+    <div class="legend">
+      <span><i class="key origin"></i> Origin · first sender</span>
+      <span><i class="key"></i> Account</span>
+      <span><i class="key end"></i> Final recipient</span>
+      <span><i class="key arrow">→</i> Transfer</span>
+      <span><i class="key selected"></i> Selected</span>
+    </div>
     <div><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="fit">Fit view</button></div>
   </div>
   <div id="viewport"><svg id="graph" role="group" aria-label="Money flow. Select an account or transfer to inspect it. Use the inspection list below as an alternative."></svg></div>
-  <div class="footer"><span id="scope"></span><span>Arrows show transfer direction</span></div>
+  <div class="footer"><span id="scope"></span><span>Arrows show transfer direction · roles are inferred from this case</span></div>
   <script src="main.js"></script>
 </body>
 </html>

@@ -49,7 +49,7 @@
   }
   function size() {
     svg.style.width = zoom === 1 ? "100%" : Math.max(viewport.clientWidth, 700)*zoom+"px";
-    svg.style.height = 360*zoom+"px";
+    svg.style.height = 380*zoom+"px";
     send("streamlit:setFrameHeight", {height:document.body.scrollHeight});
   }
   function render(next) {
@@ -87,8 +87,11 @@
         activate(group,e.key); svg.append(group);
       }
       for (const n of data.nodes) {
-        const group = el("g",{class:"node",tabindex:0,role:"button","aria-label":"Inspect account "+n.id,"data-id":n.id,"data-key":"account:"+n.id,transform:`translate(${n.x} ${n.y})`});
+        const role = n.role === "origin" ? " origin" : n.role === "endpoint" ? " endpoint" : "";
+        const roleText = n.role === "origin" ? "Origin" : n.role === "endpoint" ? "Final recipient" : "";
+        const group = el("g",{class:"node"+role,tabindex:0,role:"button","aria-label":"Inspect account "+n.id+(roleText ? " ("+roleText.toLowerCase()+", inferred)" : ""),"data-id":n.id,"data-key":"account:"+n.id,transform:`translate(${n.x} ${n.y})`});
         group.append(el("title",{},n.id),el("circle",{class:"outer",r:24,stroke:"none"}),el("circle",{r:19}),el("text",{y:4},n.label),el("text",{class:"account-label",y:42},n.short));
+        if (roleText) group.append(el("text",{class:"role-label",y:-30},roleText));
         activate(group,"account:"+n.id); svg.append(group);
       }
       if (focused) [...svg.querySelectorAll("[data-key]")].find(n => n.dataset.key === focused)?.focus({preventScroll:true});

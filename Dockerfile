@@ -12,5 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY common/ ./common/
 COPY services/ ./services/
+COPY .streamlit/ ./.streamlit/
 
 USER jovyan
