@@ -239,6 +239,30 @@ def test_members_weaker_transfers_join_the_ring():
     assert json.loads(out[0]["accounts"]) == ["A", "B", "C"]
 
 
+def test_rings_keep_their_transfers_after_the_window_moves_on():
+    """Transfers that age out of the 24 h window stay in the ring; the ring only ever grows."""
+    s = RingService(threshold=0.5, window_minutes=60, regroup_minutes=10)
+    s.offer(scored("M", "P1", 0.9, 0)); s.offer(scored("M", "P2", 0.9, 1)); s.offer(scored("M", "P3", 0.9, 2))
+    out = s.offer(scored("X", "Y", 0.1, 10))
+    assert len(out) == 1 and out[0]["version"] == "1" and out[0]["shape"] == "fan-out"
+    # two hours later the window is empty, so nothing is regrouped and nothing is republished
+    assert s.offer(scored("X", "Y", 0.1, 130)) == []
+    ring = s.rings["R-0001"]
+    assert len(ring.edges) == 3 and ring.accounts == {"M", "P1", "P2", "P3"} and len(s.window) == 0
+    # new flagged transfers from M, one to a known payee: the group {M, P1, P4} shares two of its
+    # three accounts with the ring, so it is the same ring: version 2, all five arrows kept
+    s.offer(scored("M", "P1", 0.9, 131)); s.offer(scored("M", "P4", 0.9, 132))
+    out = s.offer(scored("X", "Y", 0.1, 145))
+    assert len(out) == 1 and out[0]["ring_id"] == "R-0001" and out[0]["version"] == "2"
+    assert len(json.loads(out[0]["edges"])) == 5
+    assert json.loads(out[0]["accounts"]) == ["M", "P1", "P2", "P3", "P4"]
+    # once the window has moved on, a group sharing only M with the ring is a different ring
+    s.offer(scored("M", "Q1", 0.9, 300)); s.offer(scored("M", "Q2", 0.9, 301))
+    out = s.offer(scored("X", "Y", 0.1, 315))
+    assert [o["ring_id"] for o in out] == ["R-0002"]
+    assert len(s.rings["R-0001"].edges) == 5                                      # untouched
+
+
 def test_ring_message_fields_and_reasons():
     es = edges(("M", "P1", 0), ("M", "P2", 1), ("P1", "B", 5))
     es[0].reasons = ["paid by ACH", "new payee"]
@@ -260,7 +284,7 @@ def test_ring_message_fields_and_reasons():
 
 def test_match_ring_needs_half_the_accounts():
     from services.rings.rings import Ring
-    r = Ring("R-0001", 0); r.core = {"A", "B", "C", "D"}; r.accounts = set(r.core) | {"E"}; r.version = 1
+    r = Ring("R-0001", 0); r.accounts = {"A", "B", "C", "D"}; r.version = 1
     rings = {"R-0001": r}
     assert match_ring({"A", "B", "X"}, rings, set()) is r          # 2 of 3 shared
     assert match_ring({"A", "X", "Y", "Z"}, rings, set()) is None  # 1 of 4

@@ -326,25 +326,42 @@ def name_shape(accounts, edges) -> str:
 # ---------------------------------------------------------------- rings
 
 class Ring:
-    __slots__ = ("ring_id", "version", "core", "accounts", "txn_ids", "shape", "last_active_min")
+    """A ring remembers every transfer and account it has ever been given. The 24-hour
+    window is for discovering groups, not for forgetting them: once a transfer is part of
+    a ring it stays, so the page and the case writer always see the whole case."""
+    __slots__ = ("ring_id", "version", "accounts", "edges", "shape", "last_active_min")
 
     def __init__(self, ring_id, now_min):
         self.ring_id = ring_id
         self.version = 0
-        self.core = set()           # the accounts joined by transfers at or above the ring threshold
-        self.accounts = set()       # core plus the accounts pulled in by expansion
-        self.txn_ids = set()
+        self.accounts = set()
+        self.edges = {}             # txn_id -> Edge
         self.shape = "other"
         self.last_active_min = now_min
 
+    def absorb(self, ring_edges, accounts, max_size) -> bool:
+        """Add what is new. New accounts are added only while the ring is under max_size;
+        transfers between accounts already in the ring are always added. True if anything changed."""
+        changed = False
+        for e in sorted(ring_edges, key=lambda e: -e.score):
+            if e.txn_id in self.edges:
+                continue
+            new_accounts = {e.src, e.dst} - self.accounts
+            if new_accounts and len(self.accounts) + len(new_accounts) > max_size:
+                continue
+            self.accounts |= new_accounts
+            self.edges[e.txn_id] = e
+            changed = True
+        return changed
+
 
 def match_ring(group, rings, claimed) -> "Ring | None":
-    """The existing ring whose core shares at least half of the group's accounts (the best one)."""
+    """The existing ring that shares at least half of the group's accounts (the best one)."""
     best, best_share = None, 0.0
     for ring in rings.values():
-        if ring.ring_id in claimed or not ring.core:
+        if ring.ring_id in claimed or not ring.accounts:
             continue
-        share = len(group & ring.core) / len(group)
+        share = len(group & ring.accounts) / len(group)
         if share >= 0.5 and share > best_share:
             best, best_share = ring, share
     return best
@@ -475,20 +492,16 @@ class RingService:
             ring_edges, accounts = expand_group(core, edges, hubs, self.max_size)
             if not ring_edges:
                 continue
-            txn_ids = {e.txn_id for e in ring_edges}
             ring = match_ring(core, self.rings, claimed)
             if ring is None:
                 ring = Ring(self._new_id(), self.now_min)
                 self.rings[ring.ring_id] = ring
             claimed.add(ring.ring_id)
             ring.last_active_min = self.now_min
-            if ring.version == 0 or ring.accounts != accounts or ring.txn_ids != txn_ids:
+            if ring.absorb(ring_edges, accounts, self.max_size):
                 ring.version += 1
-                ring.core = set(core)
-                ring.accounts = accounts
-                ring.txn_ids = txn_ids
-                ring.shape = name_shape(accounts, ring_edges)
-                published.append(ring_fields(ring, ring_edges, self.data_time()))
+                ring.shape = name_shape(ring.accounts, ring.edges.values())
+                published.append(ring_fields(ring, ring.edges.values(), self.data_time()))
                 self.stats["published"] += 1
 
         for ring_id in [rid for rid, r in self.rings.items()
