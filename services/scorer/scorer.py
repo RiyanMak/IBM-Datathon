@@ -94,17 +94,30 @@ class Model:
         self.booster.load_model(str(models_dir / "scorer.json"))
         self.booster.set_param({"nthread": int(nthread)})
         self._xgb = xgb
+        # Early stopping keeps training 100 rounds past the best point, so the file holds
+        # more trees than the notebook used. Score with the trees up to the best iteration,
+        # exactly as the notebook did when it chose the thresholds.
+        self.iteration_range = best_iteration_range(self.booster)
 
     def _matrix(self, X):
         return self._xgb.DMatrix(np.asarray(X, dtype=np.float32), feature_names=self.features)
 
     def scores(self, X):
         """Laundering probability per row of X (n x 32)."""
-        return self.booster.predict(self._matrix(X))
+        return self.booster.predict(self._matrix(X), iteration_range=self.iteration_range)
 
     def contributions(self, X):
         """SHAP contribution of every clue per row (n x 32); the bias column is dropped."""
-        return self.booster.predict(self._matrix(X), pred_contribs=True)[:, :-1]
+        return self.booster.predict(self._matrix(X), pred_contribs=True, iteration_range=self.iteration_range)[:, :-1]
+
+
+def best_iteration_range(booster):
+    """(0, best_iteration + 1) when the model records a best iteration, else (0, 0) = all trees."""
+    try:
+        best = booster.best_iteration
+    except AttributeError:
+        best = None
+    return (0, int(best) + 1) if best is not None else (0, 0)
 
 
 # ---------------------------------------------------------------- warm-up

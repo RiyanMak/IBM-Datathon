@@ -71,7 +71,11 @@ def xgb_scores(models_dir, X):
     import xgboost as xgb
     booster = xgb.Booster()
     booster.load_model(str(Path(models_dir) / "scorer.json"))
-    return booster.predict(xgb.DMatrix(X, feature_names=list(FEATURE_NAMES)))
+    from services.scorer.scorer import best_iteration_range
+    # the same trees the live scorer uses (up to the best iteration), so the GNN's
+    # xgb_score input is the same number it will see in production
+    return booster.predict(xgb.DMatrix(X, feature_names=list(FEATURE_NAMES)),
+                           iteration_range=best_iteration_range(booster))
 
 
 def block_graph(rows, scores):

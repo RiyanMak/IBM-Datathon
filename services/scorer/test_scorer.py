@@ -99,6 +99,25 @@ def test_model_refuses_a_different_feature_order(models_dir, tmp_path):
         Model(tmp_path)
 
 
+def test_model_scores_with_the_trees_up_to_the_best_iteration(models_dir, tmp_path):
+    """Early stopping leaves extra trees in the file; the scorer must ignore them like the notebook did."""
+    xgb = pytest.importorskip("xgboost")
+    for name in ("feature_list.json", "thresholds.json"):
+        (tmp_path / name).write_bytes((models_dir / name).read_bytes())
+    booster = xgb.Booster()
+    booster.load_model(str(models_dir / "scorer.json"))
+    booster.set_attr(best_iteration="5")          # pretend the notebook stopped after tree 5
+    booster.save_model(str(tmp_path / "scorer.json"))
+    m = Model(tmp_path)
+    assert m.iteration_range == (0, 6)
+    X = offline_clues(transfers(40, seed=12))
+    dm = xgb.DMatrix(X, feature_names=list(FEATURE_NAMES))
+    assert np.allclose(m.scores(X), booster.predict(dm, iteration_range=(0, 6)))
+    assert not np.allclose(m.scores(X), booster.predict(dm))   # all 30 trees would differ
+    # a model without the attribute uses every tree
+    assert Model(models_dir).iteration_range == (0, 0)
+
+
 def test_model_scores_and_contributions_have_the_right_shape(models_dir):
     m = Model(models_dir)
     X = offline_clues(transfers(50, seed=3))
