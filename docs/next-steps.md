@@ -82,7 +82,7 @@ Train on the VM from the repo root inside the Jupyter container (a few minutes o
 python -m scripts.train_gnn --data /home/ibm-user/shared/data --models /home/ibm-user/shared/models
 ```
 
-It prints test precision, recall, F1 and PR-AUC for XGBoost, the GNN and their average on the same candidate transfers. Report those whichever way they come out.
+It prints test precision, recall, F1 and PR-AUC for XGBoost, the GNN and their average on the same candidate transfers. Report those whichever way they come out. Do this on the VM, not on a Mac (two OpenMP runtimes deadlock there); see the section below.
 
 What the GNN adds at ring level, from one replay: run the ring service with no `GNN_THRESHOLD` (every ring is published with its `gnn_score`), then
 
@@ -91,7 +91,7 @@ python -m scripts.evaluate_rings --labels ~/shared/data/clean.csv --models ~/sha
     --patterns ~/shared/data/HI-Small_Patterns.txt --splits ~/shared/data/splits.json --redis --gnn-sweep
 ```
 
-The sweep repeats the numbers keeping only rings at or above each GNN threshold (exactly what `--gnn-threshold` would publish). The "no GNN" row is the baseline. The pitch number is how many rings with no laundering disappear against how many caught attempts are lost. Pick the threshold there, set `GNN_THRESHOLD` in `.env` and restart the ring service. On a Mac set `KMP_DUPLICATE_LIB_OK=TRUE` (two OpenMP runtimes), and run the test suite as two processes: everything except the two PyTorch tests, then those two.
+The sweep repeats the numbers keeping only rings at or above each GNN threshold (exactly what `--gnn-threshold` would publish). The "no GNN" row is the baseline. The pitch number is how many rings with no laundering disappear against how many caught attempts are lost. Pick the threshold there, set `GNN_THRESHOLD` in `.env` and restart the ring service.
 
 `rings` message fields (the case writer and the page parse exactly these): `ring_id`, `version`, `shape`, `n_accounts`, `accounts` (JSON list), `edges` (JSON list of objects with `txn_id`, `from`, `to`, `amount_usd`, `ts`, `score`), `xgb_score`, `gnn_score`, `reasons` (JSON list), `first_seen`, `last_seen`. All values as text.
 
@@ -124,6 +124,29 @@ Without the patterns file, `--labels clean.csv --models <models>` scores the rin
 | Mean precision by shape | gather-scatter 96 %, fan-out 93 %, scatter-gather 90 %, other 73 %, cycle 56 %, fan-in 48 % |
 
 The six largest rings (20 to 30 accounts, scatter-gather and gather-scatter) are 90 to 100 % laundering. Fan-in is the weak shape: half of those rings are busy receivers rather than collectors, worth a stricter rule if there is time.
+
+### 5c. Run training, tests and evaluation on the VM
+
+Everything runs inside the compose image, which has PyTorch, XGBoost, pytest and fakeredis and mounts `~/shared` as `/data`. From `~/shared/IBM-Datathon` on the VM, after `docker compose build` once:
+
+```bash
+# the whole test suite (one process is fine on Linux)
+docker compose run --rm --no-deps scorer python -m pytest -q
+
+# train the XGBoost scorer: the notebook in Jupyter (Run All), as before
+
+# train the GNN second opinion (a few minutes on 3 cores); writes gnn.npz and gnn_meta.json next to the scorer
+docker compose run --rm --no-deps scorer python -m scripts.train_gnn --data /data/data --models /data/models
+
+# after a replay through the running stack: ring evaluation against the labels, and against the patterns file once it is in ~/shared/data
+docker compose run --rm scorer python -m scripts.evaluate_rings --labels /data/data/clean.csv --models /data/models --redis
+docker compose run --rm scorer python -m scripts.evaluate_rings --patterns /data/data/HI-Small_Patterns.txt --rates /data/data/fx_rates.json --splits /data/data/splits.json --redis
+
+# what the GNN adds (replay with GNN_THRESHOLD unset): the same numbers with no GNN and at each GNN threshold
+docker compose run --rm scorer python -m scripts.evaluate_rings --labels /data/data/clean.csv --models /data/models --patterns /data/data/HI-Small_Patterns.txt --splits /data/data/splits.json --redis --gnn-sweep
+```
+
+`--no-deps` skips starting Redis for commands that do not need it; the evaluation needs the stack's Redis, so it runs without `--no-deps`. The `scorer` service name is only used for its image and mounts; any service would do. Laptops are for editing code, not for the full-size runs.
 
 ### 6. Numbers for the pitch (Pair 1 collects)
 

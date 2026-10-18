@@ -7,8 +7,9 @@ WORKDIR /app
 # Print log lines as they happen, so `docker compose logs -f` shows them.
 ENV PYTHONUNBUFFERED=1
 
-# Packages every service needs. These have pure-Python or s390x wheels.
-RUN pip install --no-cache-dir redis requests flask
+# Packages every service needs, plus pytest and fakeredis so the test suite, the GNN
+# training and the evaluation all run inside this image on the VM. All pure Python.
+RUN pip install --no-cache-dir redis requests flask pytest fakeredis
 
 # Packages that may have no s390x wheel (streamlit needs pyarrow; snapml and
 # ibm-watsonx-ai are IBM-specific). Each is tried on its own so one failure
