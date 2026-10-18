@@ -19,6 +19,12 @@ Written October 17, 2026, late evening. Read this with `docs/next-steps.md` (pip
 - Threshold tuning on validation beats resampling and class weights for boosters; we already do this.
 - Published results swing by several F1 points between seeds; average seeds.
 
+## Done on October 18 (branch `stretch-goals`)
+
+- Steps 1, 2 and 4 are built: seven new past-only clues at the end of `FEATURE_NAMES` (39 in all) with a test each, phrases in `services/scorer/reasons.py`, and `scripts/train_xgboost.py` (three seeds, averaged probabilities, average precision, the test table split at September 11, precision at 100/500/1,000, `--tune`, `--compare-models`). The notebook mirrors it. The scorer and the GNN now select their clues by name from `feature_list.json` / `gnn_meta.json`, so the committed 32-clue model keeps running until the team swaps it.
+- Measured on the laptop with the real data (`data/models_candidate/training_report.md`, git-ignored): validation PR-AUC 0.548 (32 clues) to 0.566 to 0.581 per seed and 0.589 averaged; test F1 0.635 to 0.644 to 0.670 per seed, 0.664 averaged; before September 11 F1 0.562 to 0.561 to 0.578. The candidate saved for the scorer is tuned seed 1 (alert 0.970, ring 0.743). Swapping it in means copying `scorer.json`, `feature_list.json` and `thresholds.json` together to `models/` and `~/shared/models`, and retraining the GNN on the new `features_39.csv` or keeping it on its 32 named clues.
+- Step 3 (taint) was run offline with `scripts/train_taint.py` and is a clear no: it lowers validation PR-AUC and the before-September-11 F1 (0.571 to 0.549 averaged); only the post-September-11 tail improves. Not wired into the scorer.
+
 ## The plan, in order
 
 ### 1. Make the numbers defensible (about 30 minutes, no score change)

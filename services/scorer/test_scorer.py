@@ -90,6 +90,7 @@ def models_dir(tmp_path_factory):
 # ---------------------------------------------------------------- model
 
 def test_model_refuses_a_different_feature_order(models_dir, tmp_path):
+    """feature_list.json disagreeing with the names stored in scorer.json would pick wrong columns."""
     for name in ("scorer.json", "thresholds.json"):
         (tmp_path / name).write_bytes((models_dir / name).read_bytes())
     swapped = list(FEATURE_NAMES)
@@ -97,6 +98,70 @@ def test_model_refuses_a_different_feature_order(models_dir, tmp_path):
     (tmp_path / "feature_list.json").write_text(json.dumps(swapped))
     with pytest.raises(ValueError, match="feature_list.json"):
         Model(tmp_path)
+
+
+def test_model_refuses_a_clue_the_builder_does_not_compute(models_dir, tmp_path):
+    for name in ("scorer.json", "thresholds.json"):
+        (tmp_path / name).write_bytes((models_dir / name).read_bytes())
+    (tmp_path / "feature_list.json").write_text(json.dumps([*FEATURE_NAMES[:-1], "snd_moon_phase"]))
+    with pytest.raises(ValueError, match="feature_list.json.*snd_moon_phase"):
+        Model(tmp_path)
+
+
+@pytest.fixture(scope="module")
+def old_models_dir(tmp_path_factory):
+    """A model trained on the first 32 clues only, like the committed models/ files."""
+    xgb = pytest.importorskip("xgboost")
+    names = list(FEATURE_NAMES[:32])
+    X = offline_clues(transfers(2000, seed=21))[:, :32]
+    y = ((X[:, names.index("new_payee")] > 0.5) & (X[:, names.index("pass_through")] > 0.2)).astype(int)
+    model = xgb.XGBClassifier(n_estimators=20, max_depth=3, tree_method="hist")
+    model.fit(pd.DataFrame(X, columns=names), y)
+    folder = tmp_path_factory.mktemp("old_models")
+    model.save_model(folder / "scorer.json")
+    (folder / "feature_list.json").write_text(json.dumps(names))
+    (folder / "thresholds.json").write_text(json.dumps({"alert": 0.6, "ring": 0.2}))
+    return folder
+
+
+def test_a_32_clue_model_still_scores_after_clues_are_added(old_models_dir):
+    """The builder now computes more clues than the old model knows; the scorer picks the
+    model's 32 by name, scores exactly as the old model would, and still sends every clue."""
+    xgb = pytest.importorskip("xgboost")
+    assert len(FEATURE_NAMES) > 32
+    model = Model(old_models_dir)
+    assert model.features == list(FEATURE_NAMES[:32])
+    rows = transfers(300, seed=22)
+    X = offline_clues(rows)
+    booster = xgb.Booster()
+    booster.load_model(str(old_models_dir / "scorer.json"))
+    expected = booster.predict(xgb.DMatrix(X[:, :32], feature_names=list(FEATURE_NAMES[:32])))
+    assert np.allclose(model.scores(X), expected)
+    assert model.contributions(X[:5]).shape == (5, 32)
+
+    entries = list(zip([f"1-{i}" for i in range(len(rows))], messages(rows)))
+    results = score_batch(model, ClueBuilder(), entries)
+    assert np.allclose([float(out["score"]) for _, out, _ in results], expected, atol=1e-5)
+    for _, out, _ in results:
+        assert list(json.loads(out["clues"])) == list(FEATURE_NAMES)      # all clues, not just 32
+        assert all(isinstance(p, str) for p in json.loads(out["reasons"]))
+    assert any(json.loads(out["reasons"]) for _, out, _ in results)
+
+
+def test_model_columns_follow_the_feature_list_order(models_dir, tmp_path):
+    """A model whose feature list is in another order gets its columns in that order."""
+    xgb = pytest.importorskip("xgboost")
+    names = [FEATURE_NAMES[5], FEATURE_NAMES[0], FEATURE_NAMES[33], FEATURE_NAMES[16]]
+    X = offline_clues(transfers(500, seed=23))
+    idx = [FEATURE_NAMES.index(n) for n in names]
+    y = (X[:, FEATURE_NAMES.index("pass_through")] > 0.2).astype(int)
+    model = xgb.XGBClassifier(n_estimators=10, max_depth=2, tree_method="hist")
+    model.fit(pd.DataFrame(X[:, idx], columns=names), y)
+    model.save_model(tmp_path / "scorer.json")
+    (tmp_path / "feature_list.json").write_text(json.dumps(names))
+    (tmp_path / "thresholds.json").write_text(json.dumps({"alert": 0.5, "ring": 0.5}))
+    m = Model(tmp_path)
+    assert np.allclose(m.scores(X), model.predict_proba(pd.DataFrame(X[:, idx], columns=names))[:, 1])
 
 
 def test_model_scores_with_the_trees_up_to_the_best_iteration(models_dir, tmp_path):
@@ -321,4 +386,9 @@ def test_phrase_wording_samples():
     assert t["rcv_payers_24h"](6, 0) == "receiver was paid by 6 different accounts in 24 hours"
     assert t["snd_age_days"](0.02, 0) == "sender account first seen today"
     assert t["weekday"](3, 0) == "sent on a Thursday"
+    assert t["back_and_forth_24h"](2, 0) == "receiver paid the sender 2 times in the last 24 hours"
+    assert t["snd_payees_6h"](5, 0) == "paid 5 different accounts in 6 hours"
+    assert t["snd_amt_std_ratio"](0.05, 0) == "sender's payment amounts vary by 5% of their average"
+    assert t["snd_gap_mean_min"](-1, 0) == "sender had paid at most once before"
+    assert t["snd_gap_mean_min"](30, 0) == "sender pays out every 30 minutes on average"
     assert reasons.phrases(np.ones(len(FEATURE_NAMES)), np.zeros(len(FEATURE_NAMES)), 1.0) == []

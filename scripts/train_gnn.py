@@ -4,13 +4,17 @@ Usage (from the repo root, on the VM inside the Jupyter container or on a laptop
   python -m scripts.train_gnn --data data/processed --models data/models
   python -m scripts.train_gnn --data /home/ibm-user/shared/data --models /home/ibm-user/shared/models
 
-Reads features.csv (the 32 clues, label, split, amount) and clean.csv (time, sender,
+Reads features.csv (the clues, label, split, amount) and clean.csv (time, sender,
 receiver), scores every transfer with models/scorer.json, keeps the transfers at or above
 the ring service's expand threshold (the candidate subgraph: the same transfers the ring
 service holds in its window), trains the GNN with early stopping on held-out PR-AUC, picks
 its threshold on the held-out part, and reports test precision, recall, F1 and PR-AUC for
 XGBoost, the GNN and their average on the same transfers. Writes models/gnn.npz and
 models/gnn_meta.json.
+
+The GNN uses the clues the XGBoost model uses (models/feature_list.json), picked from
+features.csv by name, and records them in gnn_meta.json as clue_names; the ring service
+picks the same names out of each scored message.
 
 Two choices make training look like serving:
   - By default the GNN learns from the validation split: its first 75 % by time, with the
@@ -38,7 +42,7 @@ import numpy as np
 import pandas as pd
 
 from common.features import FEATURE_NAMES
-from common.gnn import NODE_FEATURES, build_graph, make_model, save_model
+from common.gnn import EXTRA_EDGE_FEATURES, NODE_FEATURES, build_graph, make_model, save_model
 
 EXPAND_THRESHOLD = 0.5
 DAY_MINUTES = 24 * 60
@@ -49,13 +53,24 @@ def log(*parts):
     print(*parts, file=sys.stderr, flush=True)
 
 
-def load_rows(data_dir):
+def model_clues(models_dir):
+    """The XGBoost model's clue names (feature_list.json), which the GNN uses as well."""
+    names = json.loads((Path(models_dir) / "feature_list.json").read_text())
+    unknown = [n for n in names if n not in FEATURE_NAMES]
+    if unknown:
+        raise SystemExit("%s/feature_list.json names clues common/features.py does not compute: %s"
+                         % (models_dir, unknown))
+    return list(names)
+
+
+def load_rows(data_dir, clues=FEATURE_NAMES, features_file=None):
     """features.csv joined with the time (ts_min, minutes) and accounts from clean.csv, by txn_id."""
     data_dir = Path(data_dir)
+    clues = list(clues)
     t0 = time.time()
-    feat = pd.read_csv(data_dir / "features.csv",
-                       usecols=["txn_id", "split", "label", "amount_usd", *FEATURE_NAMES],
-                       dtype={name: "float32" for name in FEATURE_NAMES})
+    feat = pd.read_csv(features_file or data_dir / "features.csv",
+                       usecols=["txn_id", "split", "label", "amount_usd", *clues],
+                       dtype={name: "float32" for name in clues})
     acct = pd.read_csv(data_dir / "clean.csv", usecols=["txn_id", "ts", "from_acct", "to_acct"],
                        dtype={"from_acct": str, "to_acct": str}, na_filter=False)
     if not np.array_equal(feat.txn_id.to_numpy(), acct.txn_id.to_numpy()):
@@ -67,18 +82,18 @@ def load_rows(data_dir):
     return feat
 
 
-def xgb_scores(models_dir, X):
+def xgb_scores(models_dir, X, clues=FEATURE_NAMES):
     import xgboost as xgb
     booster = xgb.Booster()
     booster.load_model(str(Path(models_dir) / "scorer.json"))
     from services.scorer.scorer import best_iteration_range
     # the same trees the live scorer uses (up to the best iteration), so the GNN's
     # xgb_score input is the same number it will see in production
-    return booster.predict(xgb.DMatrix(X, feature_names=list(FEATURE_NAMES)),
+    return booster.predict(xgb.DMatrix(X, feature_names=list(clues)),
                            iteration_range=best_iteration_range(booster))
 
 
-def block_graph(rows, scores):
+def block_graph(rows, scores, clues=FEATURE_NAMES):
     """One graph of these transfers, cut into 24-hour blocks that share no nodes.
 
     A node is "<block>|<account>", so per-account totals cover at most 24 hours, like the
@@ -87,14 +102,14 @@ def block_graph(rows, scores):
     block = (rows.ts_min.to_numpy() // DAY_MINUTES).astype(str)
     src = np.char.add(np.char.add(block, "|"), rows.from_acct.to_numpy().astype(str))
     dst = np.char.add(np.char.add(block, "|"), rows.to_acct.to_numpy().astype(str))
-    g = build_graph(src, dst, rows[list(FEATURE_NAMES)].to_numpy(), scores, rows.amount_usd.to_numpy())
+    g = build_graph(src, dst, rows[list(clues)].to_numpy(), scores, rows.amount_usd.to_numpy())
     g["y"] = rows.label.to_numpy().astype(np.float32)
     g["xgb"] = np.asarray(scores, dtype=np.float32)
     g["txn_id"] = rows.txn_id.to_numpy()
     return g
 
 
-def make_graphs(rows, scores, expand, fit_split="validation", stop_share=STOP_SHARE):
+def make_graphs(rows, scores, expand, fit_split="validation", stop_share=STOP_SHARE, clues=FEATURE_NAMES):
     """The candidate subgraphs (XGBoost score >= expand) the GNN is fitted, stopped and tested on.
 
     fit_split="validation": fit on the first (1 - stop_share) of the validation split by time,
@@ -119,7 +134,7 @@ def make_graphs(rows, scores, expand, fit_split="validation", stop_share=STOP_SH
     out = {}
     for name, m in masks.items():
         m = m & keep
-        g = block_graph(rows[m], scores[m])
+        g = block_graph(rows[m], scores[m], clues)
         out[name] = g
         log("%s graph: %s transfers, %s nodes, laundering %s (%.1f%%)" % (
             name, f"{len(g['y']):,}", f"{len(g['accounts']):,}", f"{int(g['y'].sum()):,}",
@@ -199,6 +214,7 @@ def predict_graph(model, g):
 def main(argv=None):
     p = argparse.ArgumentParser(description="Train the GNN second opinion on the candidate subgraph")
     p.add_argument("--data", required=True, help="folder with features.csv and clean.csv")
+    p.add_argument("--features-file", help="clue table to read instead of <data>/features.csv")
     p.add_argument("--models", required=True, help="folder with scorer.json and thresholds.json; gnn files are written here")
     p.add_argument("--expand", type=float, default=EXPAND_THRESHOLD, help="candidate cut-off on the XGBoost score (default: %(default)s)")
     p.add_argument("--hidden", type=int, default=32)
@@ -215,9 +231,10 @@ def main(argv=None):
     if not 0 < args.stop_share < 1:
         p.error("--stop-share must be between 0 and 1")
 
-    rows = load_rows(args.data)
-    scores = xgb_scores(args.models, rows[list(FEATURE_NAMES)].to_numpy())
-    graphs = make_graphs(rows, scores, args.expand, args.fit_split, args.stop_share)
+    clues = model_clues(args.models)
+    rows = load_rows(args.data, clues, args.features_file)
+    scores = xgb_scores(args.models, rows[clues].to_numpy(), clues)
+    graphs = make_graphs(rows, scores, args.expand, args.fit_split, args.stop_share, clues)
     del rows
 
     model, val_ap = train(graphs, args.hidden, args.layers, args.epochs, args.lr, seed=args.seed)
@@ -241,7 +258,8 @@ def main(argv=None):
 
     meta = {"expand_threshold": args.expand, "gnn_threshold": gnn_threshold, "validation_pr_auc": float(val_ap),
             "test": {k: {m: float(v) for m, v in r.items()} for k, r in rows_out.items()},
-            "edge_features": [*FEATURE_NAMES, "xgb_score", "log_amount"], "node_features": list(NODE_FEATURES),
+            "clue_names": clues, "edge_features": [*clues, *EXTRA_EDGE_FEATURES],
+            "node_features": list(NODE_FEATURES),
             "trained_on": "candidate subgraph of the %s split, 24-hour blocks" % args.fit_split,
             "fit_split": args.fit_split, "seed": args.seed}
     save_model(model, meta, args.models)

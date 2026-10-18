@@ -1,7 +1,9 @@
 """A small graph neural network that gives a ring a second opinion (step 4, part B).
 
-Accounts are nodes, transfers are directed edges carrying the 32 clues, the XGBoost
-score and the amount. Two message-passing layers: every account gathers messages
+Accounts are nodes, transfers are directed edges carrying the clues, the XGBoost
+score and the amount. Which clues, and in which order, is recorded in gnn_meta.json
+(clue_names), so a scored message carrying more clues than the GNN was trained on
+still feeds it exactly its own. Two message-passing layers: every account gathers messages
 from its incoming transfers and, separately, from its outgoing ones (direction
 matters: receiving and sending mean different things), then updates its own vector.
 An edge classifier reads [sender vector, receiver vector, edge features] and outputs
@@ -25,6 +27,24 @@ import numpy as np
 NODE_FEATURES = ("log_in_count", "log_out_count", "log_in_usd", "log_out_usd", "mean_in_score", "mean_out_score")
 WEIGHTS_NAME = "gnn.npz"
 META_NAME = "gnn_meta.json"
+EXTRA_EDGE_FEATURES = ("xgb_score", "log_amount")   # appended after the clues by build_graph
+
+
+def clue_names(meta):
+    """The clue names the GNN was trained on, in order, from its gnn_meta.json.
+
+    Newer files list them as clue_names; older ones only have edge_features, which is the
+    clues followed by the two extra edge inputs. None when the file records neither, and
+    then the caller falls back to the first edge_dim - 2 names of FEATURE_NAMES.
+    """
+    if not meta:
+        return None
+    if meta.get("clue_names"):
+        return list(meta["clue_names"])
+    edge = meta.get("edge_features")
+    if edge and len(edge) > len(EXTRA_EDGE_FEATURES):
+        return list(edge[:-len(EXTRA_EDGE_FEATURES)])
+    return None
 
 
 def build_graph(src, dst, clues, scores, amounts):

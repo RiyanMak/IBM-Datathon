@@ -347,9 +347,11 @@ def test_gnn_second_opinion_when_a_model_is_present(tmp_path):
     from common.features import FEATURE_NAMES
     from common.gnn import build_graph, make_model, save_model
 
-    # a tiny untrained model is enough to prove the plumbing: a number in 0..1 appears
-    model = make_model(len(FEATURE_NAMES) + 2)
-    save_model(model, {"gnn_threshold": 0.5, "expand_threshold": 0.5}, tmp_path)
+    # a tiny untrained model is enough to prove the plumbing: a number in 0..1 appears.
+    # It knows only the first 32 clues while the messages carry every clue: picked by name.
+    model = make_model(32 + 2)
+    save_model(model, {"gnn_threshold": 0.5, "expand_threshold": 0.5,
+                       "clue_names": list(FEATURE_NAMES[:32])}, tmp_path)
     (tmp_path / "thresholds.json").write_text(json.dumps({"alert": 0.9, "ring": 0.5}))
 
     clues = json.dumps({name: 0.1 for name in FEATURE_NAMES})
@@ -376,6 +378,34 @@ def test_gnn_second_opinion_when_a_model_is_present(tmp_path):
         r3.xadd(bus.SCORED, m)
     service = main(["--models", str(tmp_path), "--once", "--consumer", "t", "--no-gnn"], r=r3)
     assert service.gnn is None and [f for _, f in r3.xrange(bus.RINGS, "-", "+")][0]["gnn_score"] == ""
+
+
+def test_gnn_reads_its_own_clues_by_name_from_messages_with_more_clues():
+    """A GNN trained on 32 clues gets exactly those 32, in its order, from a message that
+    carries every clue the scorer computes now; nothing depends on position or count."""
+    from common.features import FEATURE_NAMES
+    from common.gnn import clue_names
+
+    old_meta = {"edge_features": [*FEATURE_NAMES[:32], "xgb_score", "log_amount"], "edge_dim": 34}
+    names = clue_names(old_meta)
+    assert names == list(FEATURE_NAMES[:32])
+    assert clue_names({"clue_names": ["pass_through", "new_payee"], "edge_features": []}) == \
+        ["pass_through", "new_payee"]
+    assert clue_names({}) is None and clue_names(None) is None
+
+    values = {name: float(i) for i, name in enumerate(FEATURE_NAMES)}
+    assert len(values) > 32
+    edge = parse_scored({**scored("A", "B", 0.9, 1), "clues": json.dumps(values)})
+    assert edge.clue_vector(names) == [float(i) for i in range(32)]
+    reordered = parse_scored({**scored("A", "B", 0.9, 2), "clues": json.dumps(values)})
+    assert reordered.clue_vector(["snd_gap_mean_min", "log_amount"]) == [values["snd_gap_mean_min"], 0.0]
+    # a message missing one of the GNN's clues gives no vector (the ring is not judged on it)
+    partial = parse_scored({**scored("A", "B", 0.9, 3), "clues": json.dumps({"log_amount": 1.0})})
+    assert partial.clue_vector(names) is None
+
+    service = RingService(0.5, gnn=object(), gnn_clues=names)
+    assert service.gnn_clues == names
+    assert RingService(0.5).gnn_clues == list(FEATURE_NAMES)
 
 
 def test_gnn_threshold_holds_back_weak_rings_until_a_version_clears_it():
