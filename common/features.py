@@ -52,44 +52,57 @@ def _bank(acct: str) -> str:
 
 
 class _Account:
-    __slots__ = ("inbound", "outbound", "in_sum", "out_sum", "payees",
+    __slots__ = ("inbound", "outbound", "in_cents", "out_cents", "payees",
                  "first_seen", "last_in", "last_out", "n_in", "sum_in", "n_out", "sum_out")
 
     def __init__(self, now: int):
-        self.inbound = deque()      # (ts_min, amount_usd, other_acct), last 24 h
+        self.inbound = deque()      # (ts_min, cents, other_acct), last 24 h
         self.outbound = deque()
-        self.in_sum = 0.0           # running sums of the two deques
-        self.out_sum = 0.0
+        # Running sums of the two deques, in whole cents. Integers stay exact when
+        # old transfers are subtracted; floats left residues like -2.8e-17 behind,
+        # and a residue divided by a residue gave pass-through values such as -25.
+        self.in_cents = 0
+        self.out_cents = 0
         self.payees = set()         # everyone this account has ever paid
         self.first_seen = now
         self.last_in = None
         self.last_out = None
-        self.n_in = 0               # lifetime counts and totals, for averages
+        self.n_in = 0               # lifetime counts and totals, for averages (only ever added to)
         self.sum_in = 0.0
         self.n_out = 0
         self.sum_out = 0.0
 
+    @property
+    def in_sum(self) -> float:
+        return self.in_cents / 100.0
+
+    @property
+    def out_sum(self) -> float:
+        return self.out_cents / 100.0
+
     def prune(self, now: int) -> None:
         cutoff = now - DAY
         while self.inbound and self.inbound[0][0] < cutoff:
-            self.in_sum -= self.inbound.popleft()[1]
+            self.in_cents -= self.inbound.popleft()[1]
         while self.outbound and self.outbound[0][0] < cutoff:
-            self.out_sum -= self.outbound.popleft()[1]
+            self.out_cents -= self.outbound.popleft()[1]
 
     def add_in(self, ts: int, amount: float, other: str) -> None:
-        self.inbound.append((ts, amount, other))
-        self.in_sum += amount
+        cents = round(amount * 100)
+        self.inbound.append((ts, cents, other))
+        self.in_cents += cents
         if len(self.inbound) > MAX_DEQUE:
-            self.in_sum -= self.inbound.popleft()[1]
+            self.in_cents -= self.inbound.popleft()[1]
         self.last_in = ts
         self.n_in += 1
         self.sum_in += amount
 
     def add_out(self, ts: int, amount: float, other: str) -> None:
-        self.outbound.append((ts, amount, other))
-        self.out_sum += amount
+        cents = round(amount * 100)
+        self.outbound.append((ts, cents, other))
+        self.out_cents += cents
         if len(self.outbound) > MAX_DEQUE:
-            self.out_sum -= self.outbound.popleft()[1]
+            self.out_cents -= self.outbound.popleft()[1]
         self.payees.add(other)
         self.last_out = ts
         self.n_out += 1

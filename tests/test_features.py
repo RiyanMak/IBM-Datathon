@@ -109,6 +109,36 @@ def test_window_drops_transfers_older_than_24h():
     assert c["new_payee"] == 0.0                           # B was paid a minute ago
 
 
+def test_window_sums_are_exact_after_pruning():
+    """Float running sums left residues like -2.8e-17 once a window emptied, and a residue
+    divided by a residue produced pass-through values such as -25. Sums are kept in
+    integer cents now, so an emptied window is exactly zero and ratios are never negative."""
+    b = ClueBuilder()
+    clues(b, T0, "1_A", "1_B", 0.1)
+    clues(b, T0 + 1, "1_A", "1_B", 0.2)
+    clues(b, T0 + 2, "1_B", "1_C", 0.7)
+    clues(b, T0 + 3, "1_B", "1_C", 0.1)
+    c = clues(b, T0 + DAY + 10, "1_X", "1_B", 5.0)      # B's whole window has aged out
+    assert c["rcv_in_sum_24h"] == 0.0 and c["rcv_out_sum_24h"] == 0.0
+    assert c["rcv_pass_through"] == 0.0
+    acct = b._accts["1_B"]                              # after remembering the 5.00 receipt
+    assert acct.out_cents == 0 and len(acct.outbound) == 0
+    assert acct.in_cents == 500 and len(acct.inbound) == 1
+
+    # over many random amounts in and out, no sum or ratio ever goes negative
+    rng = np.random.default_rng(1)
+    b = ClueBuilder()
+    for i in range(3000):
+        t = T0 + i * 7
+        amt = round(float(rng.lognormal(3, 2)), 2)
+        src, dst = ("1_P", "1_Q") if i % 2 else ("1_Q", "1_P")
+        c = clues(b, t, src, dst, amt)
+        for name in ("snd_in_sum_24h", "snd_out_sum_24h", "pass_through",
+                     "rcv_in_sum_24h", "rcv_out_sum_24h", "rcv_pass_through"):
+            assert c[name] >= 0.0, (name, c[name])
+        assert c["pass_through"] <= 5.0 and c["rcv_pass_through"] <= 5.0
+
+
 def test_zero_amount_history_does_not_divide_by_zero():
     b = ClueBuilder()
     clues(b, T0, "10_A", "10_B", 0.0)      # A's only payment and B's only receipt are 0
