@@ -87,10 +87,7 @@ services:
     build: .
     # Streamlit when it installed (it needs pyarrow, which has no s390x build); otherwise
     # the Flask fallback, same layout, same logic modules, on the same port.
-    command: >
-      sh -c "python -c 'import streamlit' 2>/dev/null
-             && exec streamlit run services/page/app.py --server.port 8501 --server.address 0.0.0.0 --client.toolbarMode minimal --browser.gatherUsageStats false
-             || exec python -m services.page.flask_app --port 8501"
+    command: sh -c "if python -c 'import streamlit' 2>/dev/null; then exec streamlit run services/page/app.py --server.port 8501 --server.address 0.0.0.0 --client.toolbarMode minimal --browser.gatherUsageStats false; else exec python -m services.page.flask_app --port 8501; fi"
     ports:
       - "127.0.0.1:8501:8501"   # reach it through an SSH tunnel; never publish it
     volumes:
