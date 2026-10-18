@@ -1,6 +1,6 @@
 # Case writer: update and integration plan
 
-Status as of 2026-10-17. The case writer (step 5) now lives in `services/casewriter/` and is wired into the shared Docker Compose stack (Phase A below is done, together with D1 to D3). Its offline tests run from the repo root with `python -m pytest -q` alongside the cleaning tests (145 pass, 1 skipped without `fakeredis`). Phases B and C (behaviour under a live replay, page conveniences) are still open and are the work for the integration sitting.
+Status as of 2026-10-18. The case writer (step 5) lives in `services/casewriter/` and is wired into the shared Docker Compose stack. Phases A, B, C1, C2 and D1 to D3 are done (list below). C3 is the page's side, D4 and D5 are with the other pairs, E is the Granite connection on the day.
 
 Done in the integration commit on `data-cleaning-v1`:
 
@@ -11,8 +11,17 @@ Done in the integration commit on `data-cleaning-v1`:
 - D1: `make_rates.py` removed. The cleaning pipeline's `fx_rates.json` (training rows only) is the team's single rate table; `patterns_to_rings.py` reads it directly (flat files still accepted).
 - D2: `patterns_to_rings.py` defaults to `/data/data/HI-Small_Patterns.txt` and `/data/data/fx_rates.json` (`~/shared/data/` on the VM; see `common/paths.py`).
 - D3: `"other"` shape text added; unknown shapes read "an unusual laundering pattern".
+- B3: template case published at once, Granite runs in a background worker and publishes the upgrade.
+- B1 (2026-10-18): one `XREADGROUP` batch keeps only the newest version per ring; older versions are acked unprocessed.
+- B2 (2026-10-18): facts equal apart from `last_seen`/`duration_hours` re-send the previous summary with `check_note = "reused vN summary"`, no Granite call.
+- B4 (2026-10-18): 15 s timeout, IAM token cached and refreshed at 50 min, a 401/404 switches Granite off with `check_note = "granite disabled: <reason>"`.
+- B5 (2026-10-18): pending messages (id `0`) are drained on startup before reading `>`.
+- B6 (2026-10-18): `written_at` in UTC ISO with zone; new fields `ring_last_seen` and `written_after_s` (empty in `--file` mode).
+- B7 (2026-10-18): `hours_to_pass_on_all` (first in to last out) in the facts pack and the template's summary sentence.
+- C1 (2026-10-18): `HSET case:<ring_id>` on every published case; it only moves forward a version, and a failed Granite try updates its `check_note`.
+- C2 (2026-10-18): `HSET stats:casewriter cases_written granite_tried granite_passed` after every case and Granite try.
 
-Problems 1 to 4, 10 and 11 in section 2 are therefore closed. The rest of this document is kept as written for the remaining phases.
+Problems 1 to 12 in section 2 are therefore closed. The rest of this document is kept as written for the remaining phases.
 
 This document is the checklist for that sitting. It covers:
 
@@ -125,13 +134,7 @@ Done when: `docker compose up -d --build casewriter` shows the container staying
 
 Do this before the hour-8 end-to-end test. About 2 hours.
 
-- **B1. Coalesce versions per batch.** After `XREADGROUP` returns up to 10 messages, keep only the newest version per `ring_id`; ack the older ones without processing.
-- **B2. Skip Granite when nothing changed.** Keep an in-memory dict `last_facts[ring_id]`. If the new facts pack equals the old one except `last_seen`, `duration_hours` and `version`, re-emit the previous summary with the new version and do not call Granite. Record `check_note = "reused vN summary"`.
-- **B3. Two-phase emit.** Write the template case the instant a ring arrives (`source=template`, `check_note="granite pending"`). Then call Granite. If the check passes, write a second case for the same `ring_id` and `version` with `source=granite`. The page always has text within milliseconds and upgrades it seconds later. This also gives the video a visible "Granite summary arrived" moment.
-- **B4. Granite call hygiene.** `TIMEOUT_SECONDS = 15` for the chat call. Cache the IAM token with its expiry and refresh at 50 minutes. On a 401 or 404, log once at startup level, set `granite_disabled = True`, and stop retrying; every case then says `check_note = "granite disabled: 404 model_not_supported"` so the problem is visible on the page.
-- **B5. Drain pending on startup.** Before the main loop, call `XREADGROUP` with id `0` once and process whatever comes back, then switch to `>`. Pass `--consumer` or use `socket.gethostname()` as now; both work.
-- **B6. Timestamps.** `written_at` in UTC (`datetime.utcnow()`). Add `ring_last_seen` (data time, copied from the ring) and `written_after_s` (wall-clock seconds between the ring message's Redis ID timestamp and the case write) so Pair 1 can report both time-to-alert in data time and case-writer latency.
-- **B7. Second pass-on duration.** Add `hours_to_pass_on_all` = first incoming to last outgoing from the key account. Keep `hours_to_pass_on` as is. The template should say "began passing it on within {hours_to_pass_on} hours and had moved {passed_on_pct}% within {hours_to_pass_on_all} hours". Both numbers are then in the facts pack and pass the fact check.
+All of B1 to B7 is done (see the list at the top).
 
 Done when: `--push-fake` with 30 copies of the same ring at increasing versions produces at most a handful of Granite calls, and `docker compose restart casewriter` mid-replay loses no rings.
 
@@ -139,8 +142,8 @@ Done when: `--push-fake` with 30 copies of the same ring at increasing versions 
 
 Agree with Pair 3 before they start the page. About 30 minutes of case-writer work.
 
-- **C1. Latest-case hash.** In addition to `XADD cases`, write `HSET case:<ring_id>` with the same fields. The page does one `HGETALL case:R-0042` per ring instead of scanning the stream and picking the newest version. The stream stays as the audit trail. Set no expiry; the dataset is 10 days.
-- **C2. Live counters.** `HSET stats:casewriter cases_written N granite_tried N granite_passed N`. The top bar reads it to show "Granite passed the fact check in X of Y cases" live.
+C1 and C2 are done (see the list at the top).
+
 - **C3. Page rules to write down.** Show the five summary parts, then a small label from `source` ("Granite, fact-checked" or "Template") with `check_note` as a tooltip. When `case:<ring_id>` does not exist yet, render "summary coming". Optionally show `facts` numbers next to the ring picture.
 
 ### Phase D: align with preprocessing and the ring service

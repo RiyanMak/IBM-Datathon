@@ -173,7 +173,8 @@ def test_card_status_disables_buttons():
 def test_decision_matches_page_on_shared_fields():
     ours = decisions.build("R-0042", "3", "freeze", "  checked  ", "slack:U0123ABC:jane.doe", "slack", now=T0)
     page = page_decisions.build("R-0042", "3", "freeze", "  checked  ", now=T0)
-    assert {k: ours[k] for k in page} == page
+    shared = ("ring_id", "version", "decision", "note", "decided_at")   # the page adds channel/decided_by of its own
+    assert {k: ours[k] for k in shared} == {k: page[k] for k in shared}
     assert ours["decided_at"] == "2026-10-18T14:02:11.123+00:00"
     assert ours["decided_by"] == "slack:U0123ABC:jane.doe" and ours["channel"] == "slack"
     assert all(isinstance(v, str) for v in ours.values())

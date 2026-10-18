@@ -83,15 +83,19 @@ class Edge:
         self.ts_min = ts_min
         self.score = score
         self.reasons = reasons
-        self.clues_json = clues_json    # the scorer's 32 clues, parsed only when the GNN needs them
+        self.clues_json = clues_json    # the scorer's clues, parsed only when the GNN needs them
         self.clues = None
 
-    def clue_vector(self):
-        """The 32 clues in FEATURE_NAMES order as float32, or None if the message had none."""
+    def clue_vector(self, names=FEATURE_NAMES):
+        """The named clues, in that order, or None if the message had none (or lacked one).
+
+        names is the GNN's own clue list from gnn_meta.json: the scorer may send more
+        clues than the GNN was trained on, and they are picked by name, never by position.
+        """
         if self.clues is None and self.clues_json:
             try:
                 d = json.loads(self.clues_json)
-                self.clues = [float(d[name]) for name in FEATURE_NAMES]
+                self.clues = [float(d[name]) for name in names]
             except (ValueError, KeyError, TypeError):
                 self.clues_json = ""
         return self.clues
@@ -447,9 +451,11 @@ class RingService:
 
     def __init__(self, threshold, window_minutes=WINDOW_MINUTES, regroup_minutes=REGROUP_MINUTES,
                  hub_limit=HUB_LIMIT, min_size=MIN_SIZE, max_size=MAX_SIZE, new_id=None,
-                 expand_threshold=EXPAND_THRESHOLD, gnn=None, gnn_threshold=None):
+                 expand_threshold=EXPAND_THRESHOLD, gnn=None, gnn_threshold=None, gnn_clues=None):
         self.threshold = float(threshold)
         self.gnn = gnn                  # a loaded common.gnn model, or None: then gnn_score stays empty
+        # the clues the GNN was trained on, by name (common.gnn.clue_names of its meta)
+        self.gnn_clues = list(gnn_clues) if gnn_clues else list(FEATURE_NAMES)
         # rings the GNN scores below this are held back; None publishes every ring
         self.gnn_threshold = None if gnn_threshold is None else float(gnn_threshold)
         # a member's transfers at or above this score join its ring (never above the ring threshold)
@@ -540,13 +546,14 @@ class RingService:
         subgraph it was trained on). Empty text if the messages carried no clues."""
         from common.gnn import build_graph, predict
 
-        own = [e for e in ring.edges.values() if e.clue_vector() is not None]
+        names = self.gnn_clues
+        own = [e for e in ring.edges.values() if e.clue_vector(names) is not None]
         if not own:
             return ""
         seen = set(ring.edges)
         neighbours = [e for e in self.window.edges
                       if e.txn_id not in seen and (e.src in ring.accounts or e.dst in ring.accounts)
-                      and e.clue_vector() is not None]
+                      and e.clue_vector(names) is not None]
         edges = own + neighbours
         graph = build_graph([e.src for e in edges], [e.dst for e in edges], [e.clues for e in edges],
                             [e.score for e in edges], [e.amount for e in edges])
@@ -706,12 +713,13 @@ def main(argv=None, r=None):
         p.error("need 2 <= --min-size <= --max-size and --batch >= 1")
 
     threshold = args.ring_threshold if args.ring_threshold is not None else load_threshold(args.models)
-    gnn = None
+    gnn = gnn_clues = None
     if not args.no_gnn:
         try:
-            from common.gnn import load_model
+            from common.gnn import clue_names, load_model
             gnn, gnn_meta = load_model(args.models)
             if gnn is not None:
+                gnn_clues = clue_names(gnn_meta) or list(FEATURE_NAMES[:gnn_meta["edge_dim"] - 2])
                 log("GNN loaded from %s (validation PR-AUC %.3f when trained); rings get a gnn_score"
                     % (args.models, gnn_meta.get("validation_pr_auc", float("nan"))))
             else:
@@ -721,7 +729,8 @@ def main(argv=None, r=None):
     r = r or bus.connect()
     service = RingService(threshold, int(args.window_hours * 60), args.regroup_minutes, args.hub_limit,
                           args.min_size, args.max_size, new_id=lambda: "R-%04d" % r.incr(ID_KEY),
-                          expand_threshold=args.expand_threshold, gnn=gnn, gnn_threshold=args.gnn_threshold)
+                          expand_threshold=args.expand_threshold, gnn=gnn, gnn_threshold=args.gnn_threshold,
+                          gnn_clues=gnn_clues)
     log("grouping '%s' -> '%s' as consumer '%s': ring threshold %.4f, expand threshold %.4f, window %gh, "
         "regroup every %d min, hubs > %d counterparties, rings of %d..%d accounts"
         % (args.stream, args.out_stream, args.consumer, threshold, service.expand_threshold,

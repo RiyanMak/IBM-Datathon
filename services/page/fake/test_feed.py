@@ -83,3 +83,30 @@ def test_reset_clears_fake_data(r):
     feed.push_scored(r, random.Random(3), 5)
     assert feed.reset(r) is True
     assert not any(r.exists(s) for s in bus.STREAMS)
+
+
+def test_bump_sends_a_newer_version_with_one_more_transfer(r):
+    from services.page import state
+    rings = feed.load_rings(feed.RINGS_FILE)
+    feed.push_fake(feed.RINGS_FILE, r)
+    feed.push_cases(r, rings)
+    first = next(x for x in rings if x["ring_id"] == "R-0002")   # edges sent as lists
+    feed.bump_ring(r, "R-0002", rings)
+    bumped = feed.bump_ring(r, "R-0002", rings)                # bumps build on the stream copy
+    assert bumped["version"] == first["version"] + 2
+    assert len(bumped["edges"]) == len(first["edges"]) + 2
+    assert bumped["edges"][-1][0].startswith(feed.FAKE_TXN_PREFIX)
+    snap = state.load(r)
+    ring = snap.ring("R-0002")
+    assert (ring.version, len(ring.edges)) == (first["version"] + 2, len(first["edges"]) + 2)
+    assert snap.cases["R-0002"].version == first["version"] + 2
+    assert state.latest_case(r, "R-0002").version == first["version"] + 2
+    with pytest.raises(ValueError):
+        feed.bump_ring(r, "R-4242", rings)                     # not a fake ring
+
+
+def test_reset_clears_fake_case_hashes(r):
+    feed.push_cases(r, feed.load_rings(feed.RINGS_FILE))
+    assert r.exists("case:R-0001")
+    assert feed.reset(r) is True
+    assert not r.exists("case:R-0001")

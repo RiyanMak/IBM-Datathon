@@ -195,3 +195,136 @@ def test_memory_is_bounded_for_hub_accounts():
     assert len(hub.inbound) == MAX_DEQUE
     assert hub.in_sum == pytest.approx(float(MAX_DEQUE))
     assert hub.n_in == MAX_DEQUE + 500                       # lifetime count still exact
+
+
+# ---------------------------------------------------------------- the seven clues added after the first 32
+
+ORIGINAL_32 = [
+    "log_amount", "is_round", "fmt_ACH", "fmt_Bitcoin", "fmt_Cash", "fmt_Cheque", "fmt_Credit_Card",
+    "fmt_Reinvestment", "fmt_Wire", "cross_currency", "cross_bank", "self_transfer", "hour", "weekday",
+    "snd_in_sum_24h", "snd_out_sum_24h", "pass_through", "mins_since_snd_last_in", "new_payee",
+    "snd_payees_24h", "snd_in_count_24h", "snd_out_count_1h", "amt_vs_snd_avg", "snd_age_days",
+    "rcv_in_sum_24h", "rcv_out_sum_24h", "rcv_pass_through", "mins_since_rcv_last_out",
+    "rcv_payers_24h", "rcv_in_count_24h", "amt_vs_rcv_avg", "rcv_age_days",
+]
+
+
+def test_first_32_names_keep_their_order():
+    """Models trained before the new clues read these 32 by name; new clues only go at the end."""
+    assert FEATURE_NAMES[:32] == ORIGINAL_32
+    assert FEATURE_NAMES[32:] == ["back_and_forth_24h", "snd_payees_6h", "rcv_payers_6h",
+                                  "snd_out_per_payee_24h", "snd_amt_std_ratio", "rcv_amt_std_ratio",
+                                  "snd_gap_mean_min"]
+
+
+def test_new_clues_with_no_history():
+    """Counts and ratios are 0 with no history; the mean gap is -1 like the other 'minutes since' clues."""
+    c = clues(ClueBuilder(), T0, "10_A", "10_B", 100.0)
+    for name in ("back_and_forth_24h", "snd_payees_6h", "rcv_payers_6h", "snd_out_per_payee_24h",
+                 "snd_amt_std_ratio", "rcv_amt_std_ratio"):
+        assert c[name] == 0.0, name
+    assert c["snd_gap_mean_min"] == -1.0
+
+
+def test_back_and_forth_counts_the_receiver_paying_the_sender_in_24h():
+    """B pays A twice, then A pays B: two earlier transfers the other way. One older than 24 h is gone."""
+    b = ClueBuilder()
+    clues(b, T0, "10_B", "10_A", 300.0)
+    clues(b, T0 + DAY - 10, "10_B", "10_A", 200.0)
+    clues(b, T0 + DAY - 5, "10_C", "10_A", 900.0)            # someone else paying A does not count
+    c = clues(b, T0 + DAY - 1, "10_A", "10_B", 450.0)
+    assert c["back_and_forth_24h"] == 2.0
+    c = clues(b, T0 + DAY + 1, "10_A", "10_B", 450.0)        # the T0 payment has aged out
+    assert c["back_and_forth_24h"] == 1.0
+    c = clues(b, T0 + DAY + 2, "10_A", "10_D", 1.0)          # D never paid A
+    assert c["back_and_forth_24h"] == 0.0
+
+
+def test_six_hour_payees_and_payers_use_a_tighter_window():
+    """M pays P0..P3 seven hours ago and P4, P5 an hour ago: 6 payees in 24 h, 2 in 6 h."""
+    b = ClueBuilder()
+    now = T0 + 8 * 60
+    for i in range(4):
+        clues(b, now - 7 * 60 + i, "10_M", f"27_P{i}", 100.0)
+    for i in (4, 5):
+        clues(b, now - 60 + i, "10_M", f"27_P{i}", 100.0)
+    c = clues(b, now, "10_M", "27_X", 100.0)
+    assert c["snd_payees_24h"] == 6.0
+    assert c["snd_payees_6h"] == 2.0
+
+    # the collector side: six payers into B, four of them more than 6 hours ago
+    b = ClueBuilder()
+    for i in range(4):
+        clues(b, now - 7 * 60 + i, f"27_P{i}", "10_B", 100.0)
+    clues(b, now - 30, "27_P4", "10_B", 100.0)
+    clues(b, now - 20, "27_P4", "10_B", 100.0)               # the same payer twice counts once
+    clues(b, now - 10, "27_P5", "10_B", 100.0)
+    c = clues(b, now, "27_Q", "10_B", 100.0)
+    assert c["rcv_payers_24h"] == 6.0
+    assert c["rcv_payers_6h"] == 2.0
+
+
+def test_out_per_payee_is_payments_divided_by_distinct_payees():
+    """Six payments in 24 h to two accounts: 3 per payee. Scatter to six strangers: 1 per payee."""
+    b = ClueBuilder()
+    for i in range(6):
+        clues(b, T0 + i, "10_A", "10_B" if i % 2 else "10_C", 50.0)
+    c = clues(b, T0 + 10, "10_A", "10_D", 50.0)
+    assert c["snd_out_per_payee_24h"] == pytest.approx(3.0)
+
+    b = ClueBuilder()
+    for i in range(6):
+        clues(b, T0 + i, "10_M", f"27_P{i}", 1600.0)
+    assert clues(b, T0 + 10, "10_M", "27_X", 1.0)["snd_out_per_payee_24h"] == pytest.approx(1.0)
+
+
+def test_amount_spread_is_std_over_mean_of_earlier_amounts():
+    """Population standard deviation over mean of the sender's earlier payments (and the
+    receiver's earlier receipts), lifetime, not windowed."""
+    amounts = [100.0, 300.0, 200.0, 1000.0]
+    b = ClueBuilder()
+    for i, amt in enumerate(amounts):
+        clues(b, T0 + i * DAY, "10_A", f"10_R{i}", amt)       # spread over days: lifetime, not 24 h
+    c = clues(b, T0 + 10 * DAY, "10_A", "10_Z", 5.0)
+    assert c["snd_amt_std_ratio"] == pytest.approx(np.std(amounts) / np.mean(amounts))
+
+    b = ClueBuilder()
+    for i, amt in enumerate(amounts):
+        clues(b, T0 + i * DAY, f"10_S{i}", "10_B", amt)
+    c = clues(b, T0 + 10 * DAY, "10_Z", "10_B", 5.0)
+    assert c["rcv_amt_std_ratio"] == pytest.approx(np.std(amounts) / np.mean(amounts))
+    assert c["snd_amt_std_ratio"] == 0.0                       # Z has never paid anyone
+
+    # identical amounts have no spread, and one earlier amount has none either
+    b = ClueBuilder()
+    for i in range(5):
+        clues(b, T0 + i, "10_A", "10_B", 1600.0)
+    c = clues(b, T0 + 9, "10_A", "10_B", 1600.0)
+    assert c["snd_amt_std_ratio"] == 0.0 and c["rcv_amt_std_ratio"] == 0.0
+
+
+def test_amount_spread_is_exact_and_never_negative_for_awkward_amounts():
+    """Sums are kept in integer cents, so many near-identical large amounts cannot leave a
+    negative variance behind (a float sum of squares would)."""
+    b = ClueBuilder()
+    for i in range(500):
+        clues(b, T0 + i, "10_A", "10_B", 123456789.01 + (i % 2) * 0.01)
+    c = clues(b, T0 + 600, "10_A", "10_B", 1.0)
+    assert 0.0 <= c["snd_amt_std_ratio"] < 1e-9
+    assert not math.isnan(c["snd_amt_std_ratio"])
+
+
+def test_mean_gap_between_the_senders_payments():
+    """Payments at 0, 10 and 40 minutes: gaps 10 and 30, mean 20. Lifetime, so old gaps count."""
+    b = ClueBuilder()
+    c = clues(b, T0, "10_A", "10_B", 10.0)
+    assert c["snd_gap_mean_min"] == -1.0                       # never paid before
+    c = clues(b, T0 + 10, "10_A", "10_C", 10.0)
+    assert c["snd_gap_mean_min"] == -1.0                       # one earlier payment: no gap yet
+    c = clues(b, T0 + 40, "10_A", "10_D", 10.0)
+    assert c["snd_gap_mean_min"] == pytest.approx(10.0)
+    c = clues(b, T0 + 2 * DAY, "10_A", "10_E", 10.0)
+    assert c["snd_gap_mean_min"] == pytest.approx(20.0)
+    clues(b, T0 + 2 * DAY + 1, "10_X", "10_A", 10.0)           # receiving money is not a payment
+    c = clues(b, T0 + 2 * DAY + 2, "10_A", "10_E", 10.0)
+    assert c["snd_gap_mean_min"] == pytest.approx((2 * DAY) / 3)

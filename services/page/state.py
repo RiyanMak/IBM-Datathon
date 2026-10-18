@@ -34,6 +34,7 @@ DECISIONS_WINDOW = 500
 
 SCORER_STATS = "stats:scorer"          # optional: scored, flagged (asked of the scorer)
 CASEWRITER_STATS = "stats:casewriter"  # optional: cases_written, granite_tried, granite_passed
+CASE_HASH = "case:%s"                  # the case writer's latest case per ring, same fields as `cases`
 
 EDGE_ORDER = ("txn_id", "from", "to", "amount_usd", "ts", "score")
 
@@ -205,6 +206,8 @@ def parse_decision(f: Dict[str, str]) -> DecisionView:
         decision=(f.get("decision") or "").strip().lower(),
         note=f.get("note", ""),
         decided_at=f.get("decided_at", ""),
+        channel=f.get("channel", ""),
+        decided_by=f.get("decided_by", ""),
     )
 
 
@@ -391,9 +394,16 @@ def detect_upgrades(seen: Dict[str, tuple], cases: Dict[str, CaseView]) -> List[
 def latest_case(r, ring_id: str) -> Optional[CaseView]:
     """The latest case for one ring.
 
-    Today this scans the `cases` stream. When the case writer adds the
-    `case:<ring_id>` hash (its plan, C1), this is the one function to change.
+    Reads the case writer's `case:<ring_id>` hash, which always holds the newest case
+    for the ring. Falls back to scanning the `cases` stream when the hash is missing
+    (cases written before the hash existed, or a feed that only writes the stream).
     """
+    held = r.hgetall(CASE_HASH % ring_id)
+    if held:
+        try:
+            return parse_case("0-0", held)   # no stream ID for a hash: received_ms is 0
+        except Exception as exc:
+            log.warning("bad case hash for %s, scanning the stream: %s", ring_id, exc)
     best = None
     for msg_id, f in r.xrevrange(bus.CASES, "+", "-", count=CASES_WINDOW):
         if f.get("ring_id") != ring_id:

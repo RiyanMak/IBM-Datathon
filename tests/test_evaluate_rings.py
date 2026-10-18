@@ -133,6 +133,59 @@ def test_gnn_sweep_keeps_only_what_the_threshold_would_publish(tmp_path):
     assert "| no GNN | 3 |" in text and "| 0.50 | 2 |" in text
 
 
+def test_attempts_that_started_before_the_period_are_reported_apart(tmp_path):
+    path = tmp_path / "patterns.txt"
+    path.write_text(PATTERNS)
+    attempts = load_attempts(path, {"Euro": 1.1})
+    # the replay starts in the middle of the scatter-gather: it began at 10:00, still running at 12:00
+    since = datetime(2022, 9, 9, 11, 0)
+    rings = [parse_ring_message(ring("R-0001", 1, "scatter-gather",
+                                     ["10_M0000001", "27_P0000001", "27_P0000002", "27_P0000003", "27_B0000001"],
+                                     "2022-09-09T12:30:00"))]
+    s = evaluate(attempts, rings, since=since)
+    assert s["attempts_in_period"] == 1 and s["caught"] == 0          # only the cycle starts after 11:00
+    assert s["started_earlier"] == {"attempts": 1, "caught": 1, "covered": 1}
+    assert s["rings_matching_an_attempt"] == 1                        # precision still credits the ring
+    assert "| Attempts that started before the period (reported apart), caught | 1, 1 |" in report(s)
+
+
+def test_alert_before_the_first_transfer_counts_as_zero_minutes(tmp_path):
+    path = tmp_path / "patterns.txt"
+    path.write_text(PATTERNS)
+    attempts = load_attempts(path, {"Euro": 1.1})
+    rings = [parse_ring_message(ring("R-0001", 1, "scatter-gather",
+                                     ["10_M0000001", "27_P0000001", "27_P0000002", "27_P0000003"],
+                                     "2022-09-09T09:30:00"))]
+    s = evaluate(attempts, rings, since=datetime(2022, 9, 8, 16, 12))
+    c = s["caught_attempts"][0]
+    assert c["minutes_to_alert"] == 0.0 and c["stoppable_share"] == 1.0
+    assert s["alerts_before_first_transfer"] == 1 and s["minutes_to_alert_p90"] == 0.0
+    assert s["still_stoppable_usd"] == s["caught_attempts_usd"] == 3 * 1600 + 3 * 1590
+
+
+def test_markdown_report_and_json_round_trip(tmp_path):
+    from scripts.evaluate_rings import main
+    patterns = tmp_path / "patterns.txt"
+    patterns.write_text(PATTERNS)
+    rings_file = tmp_path / "rings.jsonl"
+    rings_file.write_text("\n".join(json.dumps(m) for m in [
+        ring("R-0001", 1, "fan-out", ["10_M0000001", "27_P0000001", "27_P0000002", "27_P0000003"], "2022-09-09T10:40:00"),
+        ring("R-0003", 1, "fan-in", ["70_Y1", "70_Y2", "70_Y3"], "2022-09-09T23:00:00"),
+    ]) + "\n")
+    out, md = tmp_path / "eval.json", tmp_path / "evaluation.md"
+    main(["--patterns", str(patterns), "--rings-file", str(rings_file), "--replay-start", "2022-09-08T16:12:00",
+          "--out", str(out), "--report", str(md)])
+    saved = json.loads(out.read_text())
+    assert saved["attempts"]["caught"] == 1 and saved["attempts"]["attempts_in_period"] == 2
+    assert saved["meta"]["since"] == "2022-09-08T16:12:00" and saved["meta"]["ring_versions"] == 2
+    text = md.read_text()
+    assert text.startswith("# Ring-level evaluation") and "| since | `2022-09-08T16:12:00` |" in text
+    assert "| Caught by a ring (half the ring's accounts belong to the attempt) | 1 (50%) |" in text
+    assert "### Fastest and slowest alerts" in text and "| A-0001 | scatter-gather | R-0001 | 40 |" in text
+    assert "## Limitations" in text and "No exchange-rate file" in text
+    assert "| Money still stoppable, total over caught attempts | $4,770 of $9,570 |" in text
+
+
 def test_rings_file_and_missing_published_at_fall_back_to_last_seen(tmp_path):
     m = ring("R-0009", 1, "cycle", ["5_C1", "6_C2", "7_C3"], "2022-09-09T22:30:00")
     del m["published_at"]

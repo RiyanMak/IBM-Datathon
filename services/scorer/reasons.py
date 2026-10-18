@@ -69,6 +69,18 @@ TEMPLATES = {
     "rcv_in_count_24h": lambda v, amt: f"receiver got {int(v)} transfers in 24 hours",
     "amt_vs_rcv_avg": lambda v, amt: f"{v:.1f} times the receiver's usual amount",
     "rcv_age_days": lambda v, amt: f"receiver account {_days(v)}",
+    # the clues added after the first 32
+    "back_and_forth_24h": lambda v, amt: (
+        "receiver paid the sender earlier today" if int(v) == 1
+        else f"receiver paid the sender {int(v)} times in the last 24 hours"),
+    "snd_payees_6h": lambda v, amt: f"paid {int(v)} different accounts in 6 hours",
+    "rcv_payers_6h": lambda v, amt: f"receiver was paid by {int(v)} different accounts in 6 hours",
+    "snd_out_per_payee_24h": lambda v, amt: f"{v:.1f} payments per payee in 24 hours",
+    "snd_amt_std_ratio": lambda v, amt: f"sender's payment amounts vary by {v:.0%} of their average",
+    "rcv_amt_std_ratio": lambda v, amt: f"receiver's incoming amounts vary by {v:.0%} of their average",
+    "snd_gap_mean_min": lambda v, amt: (
+        "sender had paid at most once before" if v < 0
+        else f"sender pays out every {_minutes(v)} on average"),
 }
 for _fmt in FORMATS:
     TEMPLATES[f"fmt_{_fmt.replace(' ', '_')}"] = (lambda f: lambda v, amt: f"paid by {f}")(_fmt)

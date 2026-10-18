@@ -1,6 +1,8 @@
 # Stretch goals: evaluation, reviewer bot, case packet, runbook, suppression
 
-Status as of 2026-10-17 (event day, about hour 8). Owner: Aryan, with whoever is free once the model work lands. Nothing in this document is implemented yet. It is the plan we agreed to start on **after** the scorer, ring service and GNN are in the repo, so that the people building those are not interrupted.
+Status as of 2026-10-17 (event day, about hour 8). Owner: Aryan, with whoever is free once the model work lands. It is the plan we agreed to start on **after** the scorer, ring service and GNN are in the repo, so that the people building those are not interrupted.
+
+Update 2026-10-18: feature 1 is `scripts/evaluate_rings.py` (`--markdown` writes `evaluation.md` with the denominators, the attempts that started earlier, the fastest and slowest alerts and the limitations; D1 to D3 were not needed, it reads the patterns file directly); features 2, 3 and 5 are `services/notifier/` (console and Slack adapters; Teams not built); feature 4 is `docs/demo-runbook.md` and `scripts/stress_replayer.py`. The sections below are kept as the design record.
 
 This document covers:
 

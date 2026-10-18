@@ -1,8 +1,11 @@
 """Writes an investigator's decision to the `decisions` stream. No Streamlit.
 
 Fields: ring_id, decision (freeze, dismiss or more_info), note, decided_at (UTC),
-plus version, an extra field so the audit trail says which version of the ring
-the person saw. Readers that only know the guide's four fields can ignore it.
+plus three extra fields: version (which version of the ring the person saw),
+channel ("page" here, "slack" from the notifier) and decided_by (empty on the page,
+"slack:<user id>:<name>" from the notifier), so every decision in the audit trail
+has the same shape whichever way it was made. Readers that only know the guide's
+four fields can ignore the extras.
 """
 from datetime import datetime, timezone
 import hashlib
@@ -18,7 +21,8 @@ class DecisionError(ValueError):
     pass
 
 
-def build(ring_id: str, version, decision: str, note: str = "", now=None) -> dict:
+def build(ring_id: str, version, decision: str, note: str = "", now=None,
+          channel: str = "page", decided_by: str = "") -> dict:
     """The message to send, all values as text. Raises DecisionError on bad input."""
     ring_id = (ring_id or "").strip()
     decision = (decision or "").strip().lower()
@@ -36,10 +40,13 @@ def build(ring_id: str, version, decision: str, note: str = "", now=None) -> dic
         "decision": decision,
         "note": note,
         "decided_at": now.isoformat(timespec="milliseconds"),
+        "channel": (channel or "").strip(),
+        "decided_by": (decided_by or "").strip(),
     }
 
 
-def write(r, ring_id: str, version, decision: str, note: str = "", request_id=None) -> str:
+def write(r, ring_id: str, version, decision: str, note: str = "", request_id=None,
+          channel: str = "page", decided_by: str = "") -> str:
     """Append a decision. Optional idempotency protects retries after a lost ACK.
 
     The original stream fields stay intact. A short-lived side key and XADD are
@@ -47,7 +54,7 @@ def write(r, ring_id: str, version, decision: str, note: str = "", request_id=No
     Reusing a request with a different payload is rejected instead of reporting a
     different decision as saved.
     """
-    fields = build(ring_id, version, decision, note)
+    fields = build(ring_id, version, decision, note, channel=channel, decided_by=decided_by)
     if not request_id:
         return r.xadd(bus.DECISIONS, fields)
     from redis.exceptions import WatchError

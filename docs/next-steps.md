@@ -9,8 +9,10 @@ Updated October 17, 2026, after the replayer, case writer and investigator page 
 | 2+3 Scorer (`services/scorer/`) | Done. Tested with the replayer on a real Redis: keeps up with speed 600 on a laptop, p99 latency 38 ms. |
 | 4 Rings + GNN (`services/rings/`) | Grouping done (window, union-find, hubs, Louvain, shapes, stable ids, one-hop expansion, rings keep their transfers). Tested behind the scorer on a real Redis; the case writer and page read its output. GNN built and wired in (`common/gnn.py`, `scripts/train_gnn.py`, optional `--gnn-threshold`); not yet trained on the real data, so no GNN numbers yet. |
 | Ring-level evaluation (`scripts/evaluate_rings.py`) | Done and tested. Needs `HI-Small_Patterns.txt` (Kaggle) to run on the real replay; see section 4. |
-| 5 Case writer (`services/casewriter/`) | Done. |
-| 6 Investigator page (`services/page/`) | Done. |
+| 5 Case writer (`services/casewriter/`) | Done, including the live-replay phases: versions coalesced, unchanged summaries reused, Granite disabled on 401/404, `case:<ring_id>` and `stats:casewriter` hashes. |
+| 6 Investigator page (`services/page/`) | Done. Reads `case:<ring_id>` first; decisions carry `channel` and `decided_by`. |
+| 7 Reviewer bot (`services/notifier/`) | Done: cards, decisions, suppression, case packet; console and Slack adapters. |
+| Evidence (`docs/demo-runbook.md`, `scripts/evaluate_rings.py --markdown`) | Written; to be run on the VM after the final replay. |
 | Training (`notebooks/train_xgboost.ipynb`) | Run on the VM: test F1 0.63, PR-AUC 0.64. Retrain once after the clue-class fix (integer-cent sums) is merged. |
 | Platform (`Dockerfile`, `docker-compose.yml`) | Dockerfile fixed (real image, `ibm-user`, tolerant optional installs). Compose has Redis health gating, restart policies, optional `.env`, and the replayer behind the `replay` profile so it starts after the scorer's warm-up. Not yet run on the VM. |
 

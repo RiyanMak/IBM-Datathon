@@ -62,7 +62,7 @@ def allowed_numbers(facts):
         if facts.get(name) is not None:
             allowed.add(round(facts[name] * 100, 2))
     # Hours may be written in minutes (1.8 hours -> 108 minutes).
-    for name in ("hours_to_pass_on", "duration_hours"):
+    for name in ("hours_to_pass_on", "hours_to_pass_on_all", "duration_hours"):
         if facts.get(name) is not None:
             allowed.add(round(facts[name] * 60, 2))
     # Parts of the dates (a reply may write "September 8, 2022 at 14:00").

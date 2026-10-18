@@ -88,8 +88,6 @@ python -m services.casewriter.main --file services/casewriter/fake_rings.json
 python -m services.casewriter.main
 ```
 
-Redis host and stream names for every service come from `common/bus.py` (`REDIS_HOST`, default `redis` inside compose). Watsonx settings come from `.env` (copy `.env.example`). `data/processed/fx_rates.json` from the cleaning run is the team's only exchange-rate table; `patterns_to_rings.py` reads it so test rings and the scorer agree on every dollar amount.
-
 ## Reviewer bot (Slack)
 
 Posts each case from the `cases` stream to a chat channel as a card: ring, shape, scores, key facts, the five-part summary and who wrote it (Granite fact-checked or the template), with three buttons. A click writes to the `decisions` stream, the same stream the investigator page reads, so a decision made in Slack shows on the page as a badge. Slack runs in Socket Mode (an outbound websocket): no public URL and no inbound port. Lives in `services/notifier/`, see its README for the Slack app setup (two tokens and a channel ID in `.env`).

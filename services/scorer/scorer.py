@@ -2,7 +2,7 @@
 Steps 2 and 3 - the scorer.
 
 Reads transfers from the Redis stream `txns` (written by the replayer), computes
-the 32 behaviour clues with the shared ClueBuilder, scores each transfer with the
+the behaviour clues with the shared ClueBuilder, scores each transfer with the
 XGBoost model and writes the result to the stream `scored` (read by the ring
 service and the investigator page).
 
@@ -12,9 +12,12 @@ How to run (from the repo root):
   python -m services.scorer.main --no-warmup --once  # laptop without clean.csv
 
 Startup, in order:
-  1. load models/scorer.json, feature_list.json and thresholds.json. It refuses
-     to start if the model's feature order differs from common/features.py:
-     a wrong order gives wrong scores with no error.
+  1. load models/scorer.json, feature_list.json and thresholds.json. The model's
+     columns are picked from the builder's clues by name, in feature_list.json's
+     order, so a model trained on fewer clues (the first 32) keeps working after
+     clues are added. It refuses to start if feature_list.json names a clue
+     common/features.py does not compute, or disagrees with the names stored in
+     scorer.json: a wrong column gives wrong scores with no error.
   2. warm up: every clean.csv row before the test start goes through the
      ClueBuilder, so each account has its history when the first live message
      arrives (otherwise every account would look brand new).
@@ -72,18 +75,26 @@ def log(*parts):
 # ---------------------------------------------------------------- model
 
 class Model:
-    """The XGBoost scorer plus its feature order and thresholds, loaded from one folder."""
+    """The XGBoost scorer plus its feature list and thresholds, loaded from one folder.
+
+    scores() and contributions() take full clue rows (every clue in FEATURE_NAMES order,
+    as ClueBuilder returns them) and pick the model's own columns by name.
+    """
 
     def __init__(self, models_dir, nthread=1):
         import xgboost as xgb   # imported here so the module loads where xgboost is absent (tests of helpers)
 
         models_dir = Path(models_dir)
         self.features = list(json.loads((models_dir / "feature_list.json").read_text()))
-        if self.features != list(FEATURE_NAMES):
+        unknown = [name for name in self.features if name not in FEATURE_NAMES]
+        if unknown or len(set(self.features)) != len(self.features):
             raise ValueError(
-                "%s/feature_list.json does not match FEATURE_NAMES in common/features.py. "
-                "Retrain the model or restore the clue list; with a different order the "
-                "scores would be wrong without any error." % models_dir)
+                "%s/feature_list.json does not match FEATURE_NAMES in common/features.py "
+                "(unknown or repeated clues: %s). Retrain the model or restore the clue list; "
+                "with a wrong column the scores would be wrong without any error."
+                % (models_dir, unknown or "repeated names"))
+        # positions of the model's clues in a full ClueBuilder row
+        self.columns = np.array([FEATURE_NAMES.index(name) for name in self.features], dtype=np.intp)
         thresholds = json.loads((models_dir / "thresholds.json").read_text())
         self.alert = float(thresholds["alert"])
         self.ring = float(thresholds["ring"])
@@ -92,6 +103,11 @@ class Model:
                              % (self.ring, self.alert))
         self.booster = xgb.Booster()
         self.booster.load_model(str(models_dir / "scorer.json"))
+        if self.booster.feature_names and list(self.booster.feature_names) != self.features:
+            raise ValueError(
+                "%s/feature_list.json does not match the clue names stored in scorer.json. "
+                "Copy the model files together; with a wrong column the scores would be "
+                "wrong without any error." % models_dir)
         self.booster.set_param({"nthread": int(nthread)})
         self._xgb = xgb
         # Early stopping keeps training 100 rounds past the best point, so the file holds
@@ -99,15 +115,20 @@ class Model:
         # exactly as the notebook did when it chose the thresholds.
         self.iteration_range = best_iteration_range(self.booster)
 
+    def select(self, X):
+        """Full clue rows (n x len(FEATURE_NAMES)) -> the model's columns, in its order."""
+        return np.asarray(X, dtype=np.float32)[:, self.columns]
+
     def _matrix(self, X):
-        return self._xgb.DMatrix(np.asarray(X, dtype=np.float32), feature_names=self.features)
+        return self._xgb.DMatrix(self.select(X), feature_names=self.features)
 
     def scores(self, X):
-        """Laundering probability per row of X (n x 32)."""
+        """Laundering probability per full clue row of X."""
         return self.booster.predict(self._matrix(X), iteration_range=self.iteration_range)
 
     def contributions(self, X):
-        """SHAP contribution of every clue per row (n x 32); the bias column is dropped."""
+        """SHAP contribution of each of the model's clues per row (n x len(self.features));
+        the bias column is dropped."""
         return self.booster.predict(self._matrix(X), pred_contribs=True, iteration_range=self.iteration_range)[:, :-1]
 
 
@@ -276,8 +297,10 @@ def score_batch(model, builder, entries, stats=None):
         out["flagged"] = "1" if score >= model.alert else "0"
         reasons = []
         if k in contrib_of:
-            reasons = phrases(X[k], contribs[contrib_of[k]], txns[k]["amount_usd"])
+            reasons = phrases(X[k, model.columns], contribs[contrib_of[k]], txns[k]["amount_usd"],
+                              names=model.features)
         out["reasons"] = json.dumps(reasons)
+        # every clue the builder computes, not only the model's: the GNN picks its own by name
         out["clues"] = json.dumps({name: round(float(v), CLUE_DECIMALS) for name, v in zip(FEATURE_NAMES, X[k])})
         out["scored_at"] = scored_at
         latency = None

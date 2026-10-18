@@ -32,8 +32,10 @@ RUN pip freeze | grep -iE "^(pandas|numpy)==" && python -c "import pandas, numpy
 COPY common/ ./common/
 COPY services/ ./services/
 # scripts/ so the runbook's in-container commands work: python -m scripts.stress_replayer,
-# python -m scripts.evaluate_rings (docs/demo-runbook.md) and the GNN training.
+# python -m scripts.evaluate_rings (docs/demo-runbook.md) and the GNN training; tests/ so
+# the whole suite runs inside the image (docs/next-steps.md, section 5c).
 COPY scripts/ ./scripts/
+COPY tests/ ./tests/
 COPY .streamlit/ ./.streamlit/
 
 # The image's non-root user (uid 1000); ~/shared on the VM is mounted as /data.

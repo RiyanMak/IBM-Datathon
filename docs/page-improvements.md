@@ -16,22 +16,13 @@ When you do one, move it to the "Done" section at the bottom with the date.
 
 - **A ring with one bad edge is skipped entirely.** Today a single malformed edge makes the whole ring message count as bad. An alternative is to drop only that edge and show the ring with a warning. Decide after seeing what the ring service actually sends.
 - **Flagged count is approximate.** It is counted over the last 500 scored messages unless the scorer keeps `stats:scorer` (`HINCRBY stats:scorer scored 1`, `flagged 1`). Ask the scorer owner.
-- **The Granite pass rate counts case messages, not rings.** It switches to the case writer's own numbers once `stats:casewriter` exists (case writer plan, C2).
-- **`case:<ring_id>` hash.** When the case writer adds it (its plan, C1), change only `state.latest_case()` to read it.
+- **The Granite pass rate counts case messages, not rings.** It switches to the case writer's own numbers once `stats:casewriter` exists (case writer plan, C2); the case writer now keeps it, so this only applies to an older case writer.
 - **`PageState.to_dict()` leaves out the computed labels** (`shape_label`, `source_label`, decision `label`). The Flask fallback would need them in the JSON. Add them only if the fallback is built.
-
-## Times on screen
-
-- **Case times are local, decision times are UTC.** The case writer writes `written_at` in the machine's local time with no zone, so the case history can read 17:09 while a decision made a minute later reads 22:09 UTC. The page shows case times without a zone rather than mislabel them. Fix in the case writer (its plan, B6: write UTC); the page then shows "UTC" automatically.
 
 ## Page layout (`services/page/app.py`)
 
 - **Long facts table.** A ring with every fact present gives about a dozen rows beside the reasons. If it feels long during the demo, show the first five and put the rest in an expander.
 - **Pin demo rings.** Once Pair 1 picks the two or three demo attempts, a "pinned" option at the top of the ring list would keep them in view during a busy replay.
-
-## Fake feed (`services/page/fake/`)
-
-- **Ring version churn.** The feed pushes each fake ring once. A `--bump R-0001` option that re-sends a ring with a higher version and one more edge would test the "latest version wins" path on screen.
 
 ---
 
@@ -39,3 +30,7 @@ When you do one, move it to the "Done" section at the bottom with the date.
 
 - **Fast failure when Redis is down** (2026-10-17, step 4). `common.bus.connect()` accepts redis options; the page uses a 1 s connect timeout and no retries, and shows a banner.
 - **Dollar amounts garbled as maths** (2026-10-17, step 4). Found on screen: Streamlit read `$...$` as a formula. All data shown through Markdown is escaped by `fmt.md()`.
+- **`case:<ring_id>` hash** (2026-10-18). `state.latest_case()` reads the hash first and scans the stream only when it is missing.
+- **Case times in UTC** (2026-10-18). The case writer writes `written_at` with a zone; `fmt.wall_time()` already shows zoned times as UTC.
+- **Ring version churn** (2026-10-18). `python -m services.page.fake.feed --bump R-0001` re-sends a fake ring with version + 1 and one more transfer.
+- **Decisions say where they came from** (2026-10-18). `decisions` messages carry `channel` ("page") and `decided_by` (empty on the page), the same fields the Slack notifier writes.
