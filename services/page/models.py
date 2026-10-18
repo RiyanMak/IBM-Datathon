@@ -23,7 +23,7 @@ SHAPE_LABELS = {
 }
 
 SOURCE_LABELS = {
-    "granite": "Granite, fact-checked",
+    "granite": "Granite explanation",
     "template": "Template",
 }
 
@@ -36,7 +36,7 @@ PART_LABELS = {
 }
 
 DECISION_LABELS = {
-    "freeze": "Frozen",
+    "freeze": "Freeze recorded",
     "dismiss": "Dismissed",
     "more_info": "Needs more info",
 }
@@ -81,6 +81,10 @@ class Edge:
     amount_usd: Optional[float]
     ts: str              # data time, as sent
     score: Optional[float]
+    amt_paid: Optional[float] = None
+    ccy_paid: str = ""
+    amt_recv: Optional[float] = None
+    ccy_recv: str = ""
 
 
 @dataclass
@@ -133,6 +137,10 @@ class CaseView:
     def is_granite(self) -> bool:
         return self.source == "granite"
 
+    @property
+    def fact_checked(self) -> bool:
+        return self.is_granite and self.check_note.strip().lower() == "passed fact check"
+
 
 @dataclass
 class DecisionView:
@@ -173,6 +181,8 @@ class PageState:
     errors: List[str] = field(default_factory=list)
     skipped: Dict[str, int] = field(default_factory=dict)         # bad messages per stream
     loaded_ms: int = 0
+    feed_mode: str = "synthetic"
+    last_event_ms: int = 0
 
     def ring(self, ring_id: str) -> Optional[RingView]:
         return next((r for r in self.rings if r.ring_id == ring_id), None)

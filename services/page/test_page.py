@@ -157,7 +157,7 @@ def test_plain_text_summary_and_missing_facts(r):
 
 
 def test_granite_counts_from_cases(r):
-    r.xadd(bus.CASES, case_msg("R-1", source="granite"))
+    r.xadd(bus.CASES, case_msg("R-1", source="granite", check_note="passed fact check"))
     r.xadd(bus.CASES, case_msg("R-2", check_note="granite reply rejected: number 12"))
     r.xadd(bus.CASES, case_msg("R-3", check_note="granite error: timeout"))
     r.xadd(bus.CASES, case_msg("R-4", check_note="granite not used"))
@@ -227,7 +227,7 @@ def test_write_decision_and_read_back(r):
     assert msg["decided_at"].endswith("+00:00")
     snap = state.load(r)
     d = snap.decisions["R-1"]
-    assert (d.decision, d.version, d.note, d.label) == ("freeze", 2, "confirmed", "Frozen")
+    assert (d.decision, d.version, d.note, d.label) == ("freeze", 2, "confirmed", "Freeze recorded")
     assert (snap.counters.total_rings, snap.counters.open_rings) == (2, 1)
 
 
@@ -257,7 +257,7 @@ def test_decision_without_version_is_read(r):
 def test_labels_fall_back_for_unknown_values():
     assert normalise_shape(" Gather scatter ") == "gather-scatter"
     assert normalise_shape("") == "other"
-    assert source_label("granite") == "Granite, fact-checked"
+    assert source_label("granite") == "Granite explanation"
     assert source_label("llama") == "llama"
     assert part_label("next_steps_for_bank") == "Next steps for bank"
 

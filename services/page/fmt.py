@@ -49,7 +49,8 @@ FACT_LABELS = {
     "reporting_threshold_usd": "Reporting threshold",
 }
 FACT_SKIP = {"ring_id", "shape", "n_accounts", "first_seen", "last_seen", "xgb_score",
-             "gnn_score", "total_usd", "version"}
+             "gnn_score", "total_usd", "version", "label", "is_laundering",
+             "ground_truth", "pattern_id", "pattern_membership", "evaluation_label"}
 
 
 def fact_value(key: str, value) -> Optional[str]:

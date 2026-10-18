@@ -56,7 +56,7 @@ def texts(at):
 def test_empty_redis_renders(r):
     at = run()
     assert not at.exception
-    assert any("No rings yet" in t for t in texts(at))
+    assert any("No cases yet" in t for t in texts(at))
 
 
 def test_redis_down_shows_banner(monkeypatch):
@@ -71,7 +71,7 @@ def test_redis_down_shows_banner(monkeypatch):
     monkeypatch.setattr(bus, "connect", lambda **kw: dead)
     at = run()
     assert not at.exception
-    assert any("Waiting for Redis" in w.value for w in at.warning)
+    assert any("Connection unavailable" in w.value for w in at.warning)
 
 
 def test_ring_without_case_says_summary_coming(r):
@@ -91,7 +91,7 @@ def test_dollar_amounts_are_escaped(r):
     assert not at.exception
     shown = texts(at)
     assert any("\\$29,350" in t and "\\$10,000" in t for t in shown)
-    assert any("\\$1,000" in t for t in shown)
+    assert any("$1,000" in t for t in shown)
 
 
 def test_unknown_summary_part_is_shown(r):
@@ -106,12 +106,12 @@ def test_freeze_writes_a_decision(r):
     add_case(r, "R-1", version=3)
     at = run()
     at.text_area[0].input("passes money on within the hour")
-    [b for b in at.button if b.label == "Freeze accounts"][0].click().run()
+    [b for b in at.button if b.label == "Record freeze decision"][0].click().run()
     assert not at.exception
     (_id, d), = r.xrange(bus.DECISIONS)
     assert (d["ring_id"], d["version"], d["decision"], d["note"]) == (
         "R-1", "3", "freeze", "passes money on within the hour")
-    assert at.toast and "Frozen" in at.toast[0].value
+    assert at.success and "Freeze recorded" in at.success[0].value
 
 
 def test_selecting_another_ring_switches_detail(r):
@@ -132,21 +132,20 @@ def test_facts_panel_and_history(r):
     at = run()
     assert not at.exception
     assert any(m.value.startswith("| Fact | Value |") and "1\\_A" in m.value for m in at.markdown)
-    assert [e.label for e in at.expander] == ["Case history (2)"]
+    assert "Explanation history (2)" in [e.label for e in at.expander]
 
 
-def test_upgrade_shows_toast_and_highlight(r):
+def test_upgrade_provenance_does_not_claim_a_check_without_evidence(r):
     import streamlit as st
     add_ring(r, "R-1")
     add_case(r, "R-1", source="template")
     at = run()
-    assert not at.toast and not at.success
     add_case(r, "R-1", source="granite")
     st.cache_data.clear()
     at.run()
     assert not at.exception
-    assert any("Granite summary arrived for R-1" in t.value for t in at.toast)
-    assert any("arrived just now" in s.value for s in at.success)
+    assert any("Granite explanation" in t for t in texts(at))
+    assert any("passing fact check was not supplied" in t for t in texts(at))
 
 
 def test_shape_filter(r):
@@ -159,35 +158,79 @@ def test_shape_filter(r):
     at.multiselect(key="shapes").set_value(["cycle"]).run()
     assert not at.exception
     assert len(at.radio[0].options) == 1 and "R-2" in at.radio[0].options[0]
-    assert any("Showing 1 of 2 rings" in c.value for c in at.caption)
+    assert any("Showing 1 of 2 cases" in c.value for c in at.caption)
     at.slider(key="min_score").set_value(0.8).run()
-    assert any("No rings match" in i.value for i in at.info)
+    assert any("No cases match" in i.value for i in at.info)
 
 
-def top_bar_values(at):
-    return {m.label: m.value for m in at.metric}
-
-
-def test_top_bar_counts_move(r):
-    add_ring(r, "R-1")
-    add_ring(r, "R-2")
-    r.xadd(bus.DECISIONS, {"ring_id": "R-2", "version": "1", "decision": "dismiss",
-                           "note": "", "decided_at": "2026-10-17T10:00:00+00:00"})
+def test_diagnostic_counts_move(r):
+    import streamlit as st
+    add_ring(r)
     for i in range(3):
-        r.xadd(bus.SCORED, {"txn_id": "t%d" % i, "flagged": "1" if i == 0 else "0",
-                            "sent_at": "2026-10-17T10:00:00.000+00:00",
-                            "scored_at": "2026-10-17T10:00:00.004+00:00"})
+        r.xadd(bus.SCORED, {"txn_id": str(i), "flagged": "0"})
     at = run()
     assert not at.exception
-    v = top_bar_values(at)
-    assert v["Transfers scored"] == "3"
-    assert v["Flagged, last 3"] == "1"
-    assert v["Open rings"] == "1 of 2"
-    assert v["Latency p50"] == "4.0 ms"
-
-    import streamlit as st
-    for i in range(3, 10):
-        r.xadd(bus.SCORED, {"txn_id": "t%d" % i, "flagged": "0"})
+    assert any("**Transfers scored:** 3" in t for t in texts(at))
+    r.xadd(bus.SCORED, {"txn_id": "4", "flagged": "0"})
     st.cache_data.clear()
     at.run()
-    assert top_bar_values(at)["Transfers scored"] == "10"
+    assert any("**Transfers scored:** 4" in t for t in texts(at))
+
+
+def test_selected_version_is_not_silently_upgraded_on_submit(r):
+    import streamlit as st
+    add_ring(r, version=1)
+    at = run()
+    add_ring(r, version=2)
+    st.cache_data.clear()
+    at.text_area[0].input("Reviewed version one")
+    [b for b in at.button if b.label == "Record freeze decision"][0].click().run()
+    assert not at.exception
+    assert r.xrange(bus.DECISIONS)[0][1]["version"] == "1"
+    assert any("New case data" in i.value for i in at.info)
+
+
+def test_failed_decision_retains_note(r, monkeypatch):
+    from services.page import decisions
+    add_ring(r)
+    at = run()
+    def fail(*args, **kwargs):
+        raise ConnectionError("unavailable")
+    monkeypatch.setattr(decisions, "write", fail)
+    at.text_area[0].input("Keep this investigation note")
+    [b for b in at.button if b.label == "Record freeze decision"][0].click().run()
+    assert not at.exception
+    assert at.text_area[0].value == "Keep this investigation note"
+    assert at.error and "could not be confirmed" in at.error[0].value
+    assert r.xlen(bus.DECISIONS) == 0
+
+
+def test_selection_survives_new_case_ranking(r):
+    import streamlit as st
+    add_ring(r, "R-1")
+    at = run()
+    add_ring(r, "R-2")
+    st.cache_data.clear()
+    at.run()
+    assert at.radio[0].value == "R-1"
+    assert "R-1" in at.subheader[0].value
+    assert any("Update queue" in b.label for b in at.button)
+
+
+def test_stale_summary_observations_are_not_presented_as_current(r):
+    add_ring(r, version=2)
+    add_case(r, version=1)
+    at = run()
+    assert not at.exception
+    assert any("explanation describes version 1" in w.value for w in at.warning)
+    assert any("observations for this version are not available" in i.value for i in at.info)
+
+
+def test_identical_double_submission_is_not_duplicated(r):
+    add_ring(r)
+    at = run()
+    button = lambda: [b for b in at.button if b.label == "Record freeze decision"][0]
+    button().click().run()
+    button().click().run()
+    assert not at.exception
+    assert r.xlen(bus.DECISIONS) == 1

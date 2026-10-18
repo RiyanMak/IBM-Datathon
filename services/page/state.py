@@ -134,6 +134,10 @@ def parse_edge(raw) -> Edge:
         amount_usd=to_float(d.get("amount_usd")),
         ts=str(d.get("ts", "")),
         score=to_float(d.get("score")),
+        amt_paid=to_float(d.get("amt_paid")),
+        ccy_paid=str(d.get("ccy_paid") or ""),
+        amt_recv=to_float(d.get("amt_recv")),
+        ccy_recv=str(d.get("ccy_recv") or ""),
     )
 
 
@@ -236,7 +240,7 @@ def read_cases(r, snap: PageState):
         except Exception as exc:
             _bad(snap, bus.CASES, msg_id, exc)
             continue
-        if case.is_granite:
+        if case.fact_checked:
             tried += 1
             passed += 1
         elif case.check_note.startswith(("granite reply rejected", "granite error")):
@@ -262,6 +266,8 @@ def read_scored(r, snap: PageState):
     c = snap.counters
     c.scored_total = r.xlen(bus.SCORED)
     rows = r.xrevrange(bus.SCORED, "+", "-", count=SCORED_WINDOW)
+    if rows:
+        snap.last_event_ms = stream_id_ms(rows[0][0])
     flagged, latencies = 0, []
     for msg_id, f in rows:
         if f.get("flagged") == "1":
@@ -299,10 +305,21 @@ Reader = Callable[[object, PageState], None]
 READERS: List[Reader] = [read_rings, read_cases, read_casewriter_stats, read_scored, read_decisions]
 
 
+def read_feed_mode(r, snap: PageState):
+    # Optional metadata, written only by the fixture feed. Production adapters
+    # never import fixture code or infer provenance from an account identifier.
+    if r.get("page:feed_mode") == "fixture":
+        snap.feed_mode = "fixture"
+
+
+READERS.append(read_feed_mode)
+
+
 def _finish(snap: PageState):
     c = snap.counters
     c.total_rings = len(snap.rings)
     c.open_rings = sum(1 for ring in snap.rings if ring.ring_id not in snap.decisions)
+    snap.last_event_ms = max([snap.last_event_ms] + [r.received_ms for r in snap.rings])
 
 
 def load(r, readers: Optional[List[Reader]] = None) -> PageState:
@@ -400,4 +417,16 @@ def case_history(r, ring_id: str) -> List[CaseView]:
             out.append(parse_case(msg_id, f))
         except Exception:
             continue
+    return out
+
+
+def decision_history(r, ring_id: str) -> List[DecisionView]:
+    """Bounded, newest-first audit trail for one case."""
+    out = []
+    for _msg_id, fields in r.xrevrange(bus.DECISIONS, "+", "-", count=DECISIONS_WINDOW):
+        if fields.get("ring_id") == ring_id:
+            try:
+                out.append(parse_decision(fields))
+            except Exception:
+                continue
     return out

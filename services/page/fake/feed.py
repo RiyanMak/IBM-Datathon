@@ -198,6 +198,7 @@ def reset(r, force=False):
         print("refusing to reset: %s. Use --force if you are sure." % real, file=sys.stderr)
         return False
     r.delete(*bus.STREAMS)
+    r.delete("page:feed_mode")
     print("deleted streams: %s" % ", ".join(bus.STREAMS))
     return True
 
@@ -224,6 +225,7 @@ def main(argv=None):
         return 1
 
     rings = load_rings(args.rings)
+    r.set("page:feed_mode", "fixture")
     push_fake(args.rings, r)
     print("pushed %d template cases onto '%s'" % (push_cases(r, rings), bus.CASES))
     print("pushed %d fake scored rows onto '%s'" % (push_scored(r, rng, args.scored), bus.SCORED))
