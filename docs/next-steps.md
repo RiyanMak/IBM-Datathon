@@ -68,7 +68,15 @@ Part A, grouping:
 - Name the shape with the rules in the guide, most specific first: scatter-gather, cycle, gather-scatter, bipartite, stack, fan-out, fan-in, other.
 - Ring score = mean score of its transfers.
 
-Part B, the GNN (plain PyTorch, two message-passing layers with `index_add_`, trained on the candidate subgraph only, `BCEWithLogitsLoss` with `pos_weight`). Train on the VM, save as `.pt` or ONNX, never pickle. Adds `gnn_score` to each ring. Report its test precision and recall next to XGBoost's even if it does not win.
+Part B, the GNN: built (`common/gnn.py`, `scripts/train_gnn.py`). Plain PyTorch, two message-passing layers with `index_add_` over incoming and outgoing transfers separately, an edge classifier on [sender, receiver, clues], `BCEWithLogitsLoss` with `pos_weight`, early stopping on validation PR-AUC. It trains on the candidate subgraph (transfers XGBoost scores at or above 0.5: about 116,000 train transfers with 2 % laundering, 18,000 test transfers with 8.6 %), which is exactly what the ring service holds in its window. Weights are saved as `gnn.npz` (NumPy records byte order, so a laptop file loads on s390x) plus `gnn_meta.json`. The ring service loads them automatically when present and writes a `gnn_score` per ring; `--no-gnn` turns it off.
+
+Train on the VM from the repo root inside the Jupyter container (a few minutes on CPU):
+
+```bash
+python -m scripts.train_gnn --data /home/ibm-user/shared/data --models /home/ibm-user/shared/models
+```
+
+It prints test precision, recall, F1 and PR-AUC for XGBoost, the GNN and their average on the same candidate transfers. Report those whichever way they come out. On a Mac set `KMP_DUPLICATE_LIB_OK=TRUE` (two OpenMP runtimes), and run the test suite as two processes: everything except the two PyTorch tests, then those two.
 
 `rings` message fields (the case writer and the page parse exactly these): `ring_id`, `version`, `shape`, `n_accounts`, `accounts` (JSON list), `edges` (JSON list of objects with `txn_id`, `from`, `to`, `amount_usd`, `ts`, `score`), `xgb_score`, `gnn_score`, `reasons` (JSON list), `first_seen`, `last_seen`. All values as text.
 
