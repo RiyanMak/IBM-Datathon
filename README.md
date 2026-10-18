@@ -2,6 +2,8 @@
 
 Mule Ring Hunter: catches money-mule rings in real time. The AI recommends and explains, a person decides.
 
+Who it protects: the people recruited as mules. In the first half of 2023 Cifas and UK Finance logged 17,286 cases bearing the hallmarks of money muling; 64 % involved people aged 30 or under and 23 % people aged 21 or under ([Cifas](https://www.cifas.org.uk/newsroom/money-mules-more-likely-to-be-aged-under-30)).
+
 ## Dataset
 
 IBM Transactions for Anti Money Laundering (HI-Small). Synthetic data, no real customers.
@@ -117,4 +119,4 @@ The case packet (`services/notifier/packet.py`) is the draft an investigator wou
 
 ## Libraries
 
-[pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [PyTorch](https://pytorch.org), [pytest](https://docs.pytest.org), [redis-py](https://github.com/redis/redis-py), [requests](https://requests.readthedocs.io), [ibm-watsonx-ai](https://ibm.github.io/watsonx-ai-python-sdk/), [slack-bolt](https://github.com/slackapi/bolt-python), [slack-sdk](https://github.com/slackapi/python-slack-sdk).
+[XGBoost](https://xgboost.readthedocs.io), [PyTorch](https://pytorch.org), [scikit-learn](https://scikit-learn.org), [pandas](https://pandas.pydata.org), [NumPy](https://numpy.org), [NetworkX](https://networkx.org), [Redis](https://redis.io) and [redis-py](https://github.com/redis/redis-py), [Flask](https://flask.palletsprojects.com), [Streamlit](https://streamlit.io), [requests](https://requests.readthedocs.io), [slack-bolt](https://github.com/slackapi/bolt-python), [slack-sdk](https://github.com/slackapi/python-slack-sdk), [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) (optional local Granite), [pytest](https://docs.pytest.org), [fakeredis](https://github.com/cunla/fakeredis-py) (tests). Granite runs on [watsonx.ai](https://www.ibm.com/products/watsonx-ai) over HTTPS. Teams delivery was planned and not built; the notifier has console and Slack adapters.

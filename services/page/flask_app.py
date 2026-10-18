@@ -205,7 +205,7 @@ PAGE = r"""<!doctype html>
   .muted { color:var(--muted); }
 </style></head>
 <body>
-<header><h1>Mule Ring Hunter</h1><p>Investigator page. The AI recommends and explains; a person decides, and every decision is logged.</p></header>
+<header><h1>Mule Ring Hunter</h1><p>Investigator page. The AI recommends and explains; a person decides, and every decision is logged. Most recruited mules are young: 64 % of UK mule-indicative cases in H1 2023 involved people aged 30 or under (Cifas).</p></header>
 <div id="banner" class="banner"></div>
 <div id="tiles" class="tiles"></div>
 <p id="updated" class="caption"></p>
