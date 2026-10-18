@@ -52,8 +52,115 @@ def api_key():
     return os.environ.get("WATSONX_APIKEY") or os.environ.get("WATSONX_API_KEY") or ""
 
 
-def granite_configured():
+def watsonx_configured():
     return bool(api_key()) and all(os.environ.get(k) for k in ("WATSONX_PROJECT_ID", "WATSONX_URL"))
+
+
+# --- Granite on the machine itself, through llama.cpp -----------------------------
+# The LinuxONE Jupyter image ships llama_cpp_python and a Granite GGUF built for
+# s390x (big-endian). When watsonx credentials are absent and that file is found,
+# the case writer runs Granite locally: no network, no key, and the summary is
+# written on IBM Z. Point GRANITE_GGUF at the file to choose a different one.
+LOCAL_GGUF_ENV = "GRANITE_GGUF"
+LOCAL_SEARCH_DIRS = ("/data/models", "/home/ibm-user", "/home/jovyan", "/opt", "/app", "/models", ".")
+_local_llm = None
+
+
+def local_model_path():
+    """The GGUF file to use, or '' if none is available."""
+    explicit = os.environ.get(LOCAL_GGUF_ENV, "")
+    if explicit:
+        return explicit if os.path.exists(explicit) else ""
+    import glob
+    for folder in LOCAL_SEARCH_DIRS:
+        hits = sorted(glob.glob(os.path.join(folder, "granite*.gguf")))
+        if hits:
+            return hits[0]
+    return ""
+
+
+def local_configured():
+    """Opt-in: GRANITE_LOCAL=1 (or an explicit GRANITE_GGUF). Measured on the VM, the packaged
+    350M base model takes about 90 s per ring on one core and rarely closes its JSON, so it
+    stays off unless asked for; watsonx is the production path."""
+    if os.environ.get("GRANITE_LOCAL", "") not in ("1", "true", "yes") and not os.environ.get(LOCAL_GGUF_ENV):
+        return False
+    if not local_model_path():
+        return False
+    try:
+        import llama_cpp  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def granite_configured():
+    return watsonx_configured() or local_configured()
+
+
+def granite_backend():
+    """'watsonx', 'local' or '' (template only)."""
+    if watsonx_configured():
+        return "watsonx"
+    if local_configured():
+        return "local"
+    return ""
+
+
+# The reply shape, as a llama.cpp grammar: the model can only produce this JSON object
+# with these five keys, so "no JSON in reply" cannot happen and the fact check judges
+# the content alone.
+REPLY_GRAMMAR = r'''
+root ::= "{" ws "\"summary\":" ws str "," ws "\"what_happened\":" ws str "," ws "\"why_suspicious\":" ws str "," ws "\"possible_victim\":" ws str "," ws "\"suggested_next_step\":" ws str ws "}"
+str ::= "\"" ( [^"\\\n] | "\\" ["\\/bfnrt] )* "\""
+ws ::= [ \t\n]*
+'''
+
+def example_pair():
+    """A worked example for the base model: the case writer's own fake scatter-gather ring,
+    its facts pack as the code builds it, and the template's words as the reply. Built from
+    the real code paths so it always has the full facts shape and passes the fact check."""
+    import os.path
+    from services.casewriter.facts import build_facts, parse_ring
+    from services.casewriter.template import template_summary
+    with open(os.path.join(os.path.dirname(__file__), "fake_rings.json")) as fh:
+        ring = json.load(fh)[0]
+    fields = {k: (json.dumps(v) if isinstance(v, (list, dict)) else str(v)) for k, v in ring.items()}
+    facts = build_facts(parse_ring(fields))
+    return facts, template_summary(facts)
+
+
+def local_prompt(facts):
+    """A completion prompt for the base model: the rules, one worked example, then the facts."""
+    example_facts, example_reply = example_pair()
+    return (SYSTEM_PROMPT + "\n\nFacts:\n" + json.dumps(example_facts, indent=1)
+            + "\n\nReply:\n" + json.dumps(example_reply, indent=1)
+            + "\n\nFacts:\n" + json.dumps(facts, indent=1) + "\n\nReply:\n")
+
+
+def call_granite_local(facts):
+    """Run Granite through llama.cpp on this machine and return its raw reply text.
+
+    The packaged model is a base (completion) model, not a chat model, so it gets one
+    worked example and a grammar that forces the reply shape. Whatever it produces goes
+    through the same fact check as a watsonx reply.
+    """
+    global _local_llm
+    import time
+    from llama_cpp import Llama, LlamaGrammar
+
+    if _local_llm is None:
+        t0 = time.monotonic()
+        _local_llm = Llama(model_path=local_model_path(), n_ctx=int(os.environ.get("GRANITE_CTX", "4096")),
+                           n_threads=int(os.environ.get("GRANITE_THREADS", "1")), verbose=False)
+        print("granite (local): model loaded in %.0f s from %s" % (time.monotonic() - t0, local_model_path()))
+    t0 = time.monotonic()
+    out = _local_llm(local_prompt(facts), max_tokens=int(os.environ.get("GRANITE_MAX_TOKENS", "260")),
+                     temperature=0.0, grammar=LlamaGrammar.from_string(REPLY_GRAMMAR, verbose=False))
+    text = out["choices"][0]["text"]
+    print("granite (local): %s in %.0f s, %d tokens" % (facts.get("ring_id"), time.monotonic() - t0,
+                                                         out.get("usage", {}).get("completion_tokens", 0)))
+    return text
 
 
 def build_messages(facts):
@@ -75,7 +182,12 @@ def _iam_token(api_key):
 
 
 def call_granite(facts):
-    """Send the facts to Granite and return its raw reply text."""
+    """Send the facts to Granite and return its raw reply text: watsonx when configured,
+    otherwise the local llama.cpp model."""
+    if not watsonx_configured():
+        if local_configured():
+            return call_granite_local(facts)
+        raise RuntimeError("Granite is not configured: no watsonx credentials and no local GGUF")
     import requests
     token = _iam_token(api_key())
     url = os.environ["WATSONX_URL"].rstrip("/") + "/ml/v1/text/chat?version=" + API_VERSION

@@ -7,6 +7,21 @@ Mule Ring Hunter: catches money-mule rings in real time. The AI recommends and e
 IBM Transactions for Anti Money Laundering (HI-Small). Synthetic data, no real customers.
 https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml
 
+## Run the stack on the VM
+
+Needs `~/shared/data/clean.csv` and `splits.json` (from the cleaning below) and `~/shared/models/` (from `notebooks/train_xgboost.ipynb`). From the repo root on the VM:
+
+```bash
+docker compose up -d --build                      # Redis, scorer, ring service, case writer, page
+docker compose logs -f scorer                     # wait for "scoring 'txns' -> 'scored'": the warm-up takes a few minutes
+docker compose --profile replay up -d replayer    # then start the replay of the test period
+ssh -L 8501:localhost:8501 linux1@<vm-ip>         # from your laptop, then open http://localhost:8501
+```
+
+`docker compose --profile replay ps` lists all six containers; `docker compose up -d --scale scorer=3` runs three scorers on one queue. Each service has a README in `services/<name>/`.
+
+Tests, GNN training and the ring evaluation also run on the VM inside the same image, for example `docker compose run --rm --no-deps scorer python -m pytest -q`; the full list is in `docs/next-steps.md`, section 5c.
+
 ## Data cleaning
 
 The cleaning pipeline turns `HI-Small_Trans.csv` into one typed, time-sorted table and a few reports. It never edits the raw file and never auto-fixes data: if something breaks the data contract, the run stops with exit code 1 and explains why in `data_quality.md`.
@@ -46,17 +61,18 @@ Add `--overwrite` to replace existing outputs. `--nrows N` (the first N rows) al
 
 ## GNN ring re-scorer (step 4 part B)
 
-Gives every candidate ring a second score from a small graph neural network run over the transfers two hops around it, and drops weak rings before they reach the case writer. Plain PyTorch, JSON weights (portable to s390x), trained on `data/processed/clean.csv`. Lives in `services/gnn/`, see its README for how the ring service calls it (one import, one call) and the results.
+Gives every ring a second score (`gnn_score`) from a small graph neural network run over the ring and the window transfers touching it, and can hold back weak rings before they reach the case writer. Plain PyTorch, weights as `.npz` (portable to s390x). The model is `common/gnn.py`, trained by `scripts/train_gnn.py` on the transfers XGBoost scores at or above 0.5 in the validation split (where XGBoost's scores are honest), cut into 24-hour blocks like the ring service's window. The ring service loads it from `models/gnn.npz` when present; see `services/rings/README.md`.
 
 ```bash
-# checks
-python -m pytest -q services/gnn
+# train (prints XGBoost vs GNN on the same test transfers), writes models/gnn.npz + gnn_meta.json
+python -m scripts.train_gnn --data ~/shared/data --models ~/shared/models
 
-# real rings from the Patterns file, scored, then precision before/after
-python -m services.gnn.patterns_to_rings ~/Downloads/HI-Small_Patterns.txt data/gnn/real_rings.json --txns data/processed/clean.csv --from-ts 2022-09-08T16:12:00 --decoys 200
-python -m services.gnn.main --file data/gnn/real_rings.json --txns data/processed/clean.csv --keep-weak --out data/gnn/real_rescored.json
-python -m services.gnn.evaluate --rings data/gnn/real_rescored.json --patterns ~/Downloads/HI-Small_Patterns.txt
+# after a replay with no GNN_THRESHOLD: ring numbers with no GNN and at each GNN threshold
+python -m scripts.evaluate_rings --labels ~/shared/data/clean.csv --models ~/shared/models \
+    --patterns ~/shared/data/HI-Small_Patterns.txt --splits ~/shared/data/splits.json --redis --gnn-sweep
 ```
+
+Then set `GNN_THRESHOLD` in `.env` from the sweep. `services/gnn/` holds an earlier, separate GNN (PR #6) that the ring service does not use: its weights were trained without the XGBoost score on the transfers, which is the strongest input the ring service has.
 
 ## Case writer
 

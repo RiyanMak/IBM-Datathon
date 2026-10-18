@@ -1,0 +1,10 @@
+{
+  "alert": 0.9841433763504028,
+  "ring": 0.9457256197929382,
+  "chosen_on": "validation",
+  "val_precision_at_alert": 0.808130081300813,
+  "val_recall_at_alert": 0.45933456561922364,
+  "val_f1_at_alert": 0.5857395403648884,
+  "val_precision_at_ring": 0.25,
+  "val_recall_at_ring": 0.6266173752310537
+}

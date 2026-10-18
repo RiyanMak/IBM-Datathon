@@ -181,6 +181,80 @@ def test_redis_end_to_end():
     assert {fields["ring_id"] for _id, fields in cases} == {"R-0001", "R-0002", "R-0003"}
 
 
+def test_service_publishes_template_first_then_the_granite_upgrade():
+    """The service writes the template at once and a Granite case afterwards from its worker."""
+    try:
+        import fakeredis
+    except ImportError:
+        import pytest
+        pytest.skip("pip install fakeredis to run it")
+    from services.casewriter.casewriter import push_fake, run_redis
+    r = fakeredis.FakeRedis(decode_responses=True)
+    push_fake(str(FAKE_RINGS), r)
+    # a "Granite" that answers with the template's own words: it passes the fact check
+    stats = run_redis(use_granite=True, r=r, max_loops=1,
+                      granite_fn=lambda facts: json.dumps(template_summary(facts)))
+    cases = [fields for _id, fields in r.xrange("cases")]
+    assert len(cases) == 6
+    for ring_id in ("R-0001", "R-0002", "R-0003"):
+        mine = [c["source"] for c in cases if c["ring_id"] == ring_id]
+        assert mine == ["template", "granite"], ring_id     # the template always lands first
+    assert all(c["check_note"] == "passed fact check" for c in cases if c["source"] == "granite")
+    assert stats.granite_tried == 3 and stats.granite_passed == 3
+
+
+def test_service_keeps_the_template_when_granite_lies_or_fails():
+    try:
+        import fakeredis
+    except ImportError:
+        import pytest
+        pytest.skip("pip install fakeredis to run it")
+    from services.casewriter.casewriter import push_fake, run_redis
+    r = fakeredis.FakeRedis(decode_responses=True)
+    push_fake(str(FAKE_RINGS), r)
+
+    def lying(facts):
+        parts = template_summary(facts)
+        parts["summary"] = "Account 99_FAKE moved $123,456,789 between the accounts."
+        return json.dumps(parts)
+    stats = run_redis(use_granite=True, r=r, max_loops=1, granite_fn=lying)
+    assert [fields["source"] for _id, fields in r.xrange("cases")] == ["template"] * 3
+    assert stats.granite_tried == 3 and stats.granite_passed == 0
+
+    r2 = fakeredis.FakeRedis(decode_responses=True)
+    push_fake(str(FAKE_RINGS), r2)
+    def crashing(facts):
+        raise RuntimeError("model not loaded")
+    stats = run_redis(use_granite=True, r=r2, max_loops=1, granite_fn=crashing)
+    assert [fields["source"] for _id, fields in r2.xrange("cases")] == ["template"] * 3
+    assert stats.granite_passed == 0
+
+
+def test_granite_backend_selection_without_credentials_or_model(monkeypatch=None):
+    import os
+    from services.casewriter import granite
+    saved = {k: os.environ.pop(k, None) for k in ("WATSONX_APIKEY", "WATSONX_API_KEY", "WATSONX_PROJECT_ID",
+                                                   "WATSONX_URL", "GRANITE_GGUF")}
+    try:
+        os.environ["GRANITE_GGUF"] = "/nowhere/granite.gguf"   # an explicit path that does not exist: no search
+        assert granite.local_model_path() == ""
+        assert granite.granite_backend() == ""
+        assert not granite.granite_configured()
+        try:
+            granite.call_granite({"ring_id": "R-1"})
+            assert False, "should refuse without any backend"
+        except RuntimeError as exc:
+            assert "not configured" in str(exc)
+        os.environ.update({"WATSONX_APIKEY": "k", "WATSONX_PROJECT_ID": "p", "WATSONX_URL": "https://x"})
+        assert granite.granite_backend() == "watsonx"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):

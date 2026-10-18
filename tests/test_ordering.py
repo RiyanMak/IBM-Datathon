@@ -11,7 +11,7 @@ def make_frame(minutes, source_rows, accounts=None):
     accounts = accounts if accounts is not None else [f"10_A{r}" for r in source_rows]
     return pd.DataFrame({
         "source_row": pd.Series(source_rows, dtype="int64"),
-        "ts": pd.to_datetime([f"2022-09-01 00:{m:02d}" for m in minutes]).astype("datetime64[ns]"),
+        "ts": pd.to_datetime([f"2022-09-01 00:{m:02d}" for m in minutes], format="ISO8601").astype("datetime64[ns]"),
         "from_acct": accounts,
         "amt_paid": [float(r) for r in source_rows],
     })

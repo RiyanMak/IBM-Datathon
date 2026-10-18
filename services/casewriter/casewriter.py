@@ -79,6 +79,41 @@ def write_case(fields, use_granite, stats=None, granite_fn=None):
     }
 
 
+def granite_case(fields, stats=None, granite_fn=None):
+    """Try Granite for one ring. Returns the upgraded case message (source "granite"),
+    or None when the call failed or the reply failed the fact check (the reason is printed).
+
+    Used by the service after the template case has already been published, so a slow
+    model never delays the page: the template shows first and Granite replaces it.
+    """
+    granite_fn = granite_fn or granite.call_granite
+    ring = parse_ring(fields)
+    facts = build_facts(ring)
+    template = template_summary(facts)
+    if stats:
+        stats.granite_tried += 1
+    try:
+        reply = granite.parse_reply(granite_fn(facts))
+        ok, why = check_reply(reply, facts, ring["accounts"])
+    except Exception as exc:  # network error, bad JSON, timeout, model error...
+        print("granite error for %s v%s: %s" % (ring["ring_id"], ring["version"], str(exc)[:200]), file=sys.stderr)
+        return None
+    if not ok:
+        print("granite reply rejected for %s v%s: %s" % (ring["ring_id"], ring["version"], why), file=sys.stderr)
+        return None
+    if stats:
+        stats.granite_passed += 1
+    return {
+        "ring_id": ring["ring_id"],
+        "version": ring["version"],
+        "summary": json.dumps({k: reply[k] for k in template}),
+        "source": "granite",
+        "check_note": "passed fact check",
+        "written_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "facts": json.dumps(facts),
+    }
+
+
 def ring_to_stream_fields(ring):
     """Fake ring (Python dict) -> text values, exactly as the ring service sends them."""
     out = {}
@@ -114,7 +149,52 @@ def push_fake(path, r=None):
     print("pushed %d fake rings onto '%s'" % (len(rings), IN_STREAM))
 
 
-def run_redis(use_granite, r=None, max_loops=None):
+class GraniteWorker:
+    """Runs Granite for rings in the background and publishes the upgraded cases.
+
+    The service publishes the template case at once, then hands the ring to this
+    worker. Granite on the VM's CPU can take tens of seconds per ring; the page shows
+    the template meanwhile and swaps in the Granite summary when it arrives. A ring
+    that arrives while the queue is full keeps its template (noted in the log).
+    """
+    QUEUE_SIZE = 200
+
+    def __init__(self, r, stats, granite_fn=None):
+        import queue
+        import threading
+        self.r, self.stats, self.granite_fn = r, stats, granite_fn
+        self.queue = queue.Queue(maxsize=self.QUEUE_SIZE)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def submit(self, fields):
+        try:
+            self.queue.put_nowait(fields)
+        except Exception:
+            print("granite queue full: %s v%s keeps the template" % (fields.get("ring_id"), fields.get("version")),
+                  file=sys.stderr)
+
+    def _run(self):
+        while True:
+            fields = self.queue.get()
+            if fields is None:
+                return
+            try:
+                case = granite_case(fields, self.stats, self.granite_fn)
+                if case:
+                    self.r.xadd(OUT_STREAM, case)
+                    print("case for %s v%s (granite, replaced the template)" % (case["ring_id"], case["version"]))
+            except Exception as exc:
+                print("granite worker error: %s" % exc, file=sys.stderr)
+            finally:
+                self.queue.task_done()
+
+    def drain(self):
+        """Wait for every queued ring (tests and shutdown)."""
+        self.queue.join()
+
+
+def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None):
     import redis
     r = r or connect_redis()
     try:
@@ -124,7 +204,10 @@ def run_redis(use_granite, r=None, max_loops=None):
             raise
     consumer = socket.gethostname()
     stats = Stats()
-    print("case writer listening on '%s' (Granite: %s)" % (IN_STREAM, "on" if use_granite else "off"))
+    backend = (granite.granite_backend() or ("custom" if granite_fn else "")) if use_granite else ""
+    print("case writer listening on '%s' (Granite: %s)" % (IN_STREAM, backend or "off"))
+    if use_granite and worker is None:
+        worker = GraniteWorker(r, stats, granite_fn)
     loops = 0
     while max_loops is None or loops < max_loops:
         loops += 1
@@ -132,14 +215,19 @@ def run_redis(use_granite, r=None, max_loops=None):
         for _stream, messages in reply or []:
             for msg_id, fields in messages:
                 try:
-                    case = write_case(fields, use_granite, stats)
+                    # the template first, at once; Granite replaces it when it passes the fact check
+                    case = write_case(fields, False, stats)
                     r.xadd(OUT_STREAM, case)
                     print("case for %s v%s (%s)" % (case["ring_id"], case["version"], case["source"]))
+                    if use_granite:
+                        worker.submit(fields)
                 except Exception as exc:
                     print("skipped bad ring message %s: %s" % (msg_id, exc), file=sys.stderr)
                 r.xack(IN_STREAM, GROUP, msg_id)
         if stats.cases:
             print(stats.line())
+    if worker is not None and max_loops is not None:
+        worker.drain()
     return stats
 
 
