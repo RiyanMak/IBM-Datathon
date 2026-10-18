@@ -68,16 +68,23 @@ def texts(at):
 def test_empty_redis_renders(r):
     at = run()
     assert not at.exception
-    assert any("Find the accounts" in m.value for m in at.markdown)
+    assert any("Mule Ring" in m.value for m in at.markdown)
+    assert any(b.label == "Start investigating" for b in at.button)
     at = run("cases")
     assert not at.exception
     assert any("No cases yet" in t for t in texts(at))
 
 
-def test_overview_links_every_step(r):
+def test_how_it_works_page_explains_the_pipeline(r):
     at = run()
+    at.switch_page("views/about.py").run()
     assert not at.exception
     assert any("How a transfer becomes a case" in m.value for m in at.markdown)
+
+
+def test_theme_switch_button_is_offered(r):
+    at = run()
+    assert any(b.label.startswith("Switch to") for b in at.button)
 
 
 def test_redis_down_shows_banner(monkeypatch):
@@ -195,11 +202,12 @@ def test_diagnostic_counts_move(r):
     at = run()
     at.switch_page("views/status.py").run()
     assert not at.exception
-    assert any("**Transfers scored:** 3" in t for t in texts(at))
+    tile = lambda: next(t for t in texts(at) if "Transfers scored" in t and 'class="tile"' in t)
+    assert "<strong>3</strong>" in tile()
     r.xadd(bus.SCORED, {"txn_id": "4", "flagged": "0"})
     st.cache_data.clear()
     at.run()
-    assert any("**Transfers scored:** 4" in t for t in texts(at))
+    assert "<strong>4</strong>" in tile()
 
 
 def test_selected_version_is_not_silently_upgraded_on_submit(r):

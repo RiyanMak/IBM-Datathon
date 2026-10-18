@@ -1,36 +1,35 @@
-# One coherent default theme for the investigator page. Dark tokens still apply when a
-# viewer switches theme from the Streamlit menu; the page never follows the OS automatically.
+# Two deliberate themes modelled on IBM Carbon: Gray 10 (light) and Gray 100 (dark).
+# The page's own tokens (styles.css / ui.DARK_TOKENS) follow whichever one is active.
 [theme]
 base = "light"
-primaryColor = "#2E5BFF"
-backgroundColor = "#F6F7F9"
+primaryColor = "#0F62FE"
+backgroundColor = "#F4F4F4"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#0E1420"
-linkColor = "#2E5BFF"
-borderColor = "#E3E6EC"
-baseRadius = "0.6rem"
-buttonRadius = "0.6rem"
-font = "system-ui, sans-serif"
-headingFont = "system-ui, sans-serif"
+textColor = "#161616"
+linkColor = "#0F62FE"
+borderColor = "#E0E0E0"
+baseRadius = "none"
+buttonRadius = "none"
+font = "IBM Plex Sans, system-ui, sans-serif"
+headingFont = "IBM Plex Sans, system-ui, sans-serif"
+codeFont = "IBM Plex Mono, Menlo, monospace"
 showSidebarBorder = false
 
+[theme.dark]
+primaryColor = "#4589FF"
+backgroundColor = "#161616"
+secondaryBackgroundColor = "#262626"
+textColor = "#F4F4F4"
+linkColor = "#78A9FF"
+borderColor = "#393939"
+baseRadius = "none"
+buttonRadius = "none"
+font = "IBM Plex Sans, system-ui, sans-serif"
+headingFont = "IBM Plex Sans, system-ui, sans-serif"
+codeFont = "IBM Plex Mono, Menlo, monospace"
+
 [client]
-toolbarMode = "minimal"
+toolbarMode = "viewer"
 
 [browser]
 gatherUsageStats = false
-
-# The same palette for viewers whose system prefers dark, so everyone sees one deliberate
-# design. Remove this section to let Streamlit's built-in dark base apply instead; the page's
-# own dark tokens (ui.DARK_TOKENS) then take over.
-[theme.dark]
-primaryColor = "#2E5BFF"
-backgroundColor = "#F6F7F9"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#0E1420"
-linkColor = "#2E5BFF"
-borderColor = "#E3E6EC"
-baseRadius = "0.6rem"
-buttonRadius = "0.6rem"
-font = "system-ui, sans-serif"
-headingFont = "system-ui, sans-serif"

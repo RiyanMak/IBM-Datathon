@@ -65,13 +65,17 @@ Start over with `python -m services.page.fake.feed --reset --decisions` (it refu
 ## Investigation workspace (UI refresh)
 
 The application is one frame with one page per step, reached from the top navigation:
-**Overview** (purpose, live status, pipeline), **Cases** (01), **Investigate** (02),
-**Evidence** (03), **Decide** (04) and **System status** (diagnostics). The step rail and
-the case context bar keep the selected case consistent across pages. The theme is pinned in
-`.streamlit/config.toml` (light palette, cobalt accent, coral origin, green final recipient)
-for every viewer; remove `[theme.dark]` there to let Streamlit's dark base and the page's own
-dark tokens apply. Motion is limited to reveal-on-scroll on the overview, a short page
-transition, and state transitions; all of it is disabled under `prefers-reduced-motion`.
+**Start** (entry page with the flow animation and one button into the workspace), **Cases** (01),
+**Investigate** (02), **Evidence** (03), **Decide** (04), **System status** (diagnostics) and
+**How it works** (pipeline and the four steps for first-time viewers). The step indicator and
+the case context bar keep the selected case consistent across pages.
+
+Visual language follows IBM Carbon: IBM Plex Sans, square corners, hairline grids, flat tiles,
+Blue 60 as the single interactive colour, Gray 10 (light) and Gray 100 (dark) themes defined in
+`.streamlit/config.toml`. The **Switch to dark/light mode** button stores the choice the way
+Streamlit's own settings menu does and reloads; the page tokens and the graph follow. Motion is
+limited to reveal-on-scroll on How it works, a short page transition, and state transitions,
+all disabled under `prefers-reduced-motion`.
 
 The main path is **choose a case → select an account or transfer → review evidence → record a decision**.
 The default queue sorts by model score and holds its order until **Update queue** is clicked.

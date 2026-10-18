@@ -16,19 +16,23 @@ from services.page import fmt, state, workspace as ws
 HERE = Path(__file__).resolve().parent
 REFRESH_S = 2
 SORTS = {"Highest score": "score", "Newest data": "newest"}
-DARK_TOKENS = (":root{--canvas:#0f1217;--surface:#171b22;--surface-2:#1f242e;--ink:#eceef3;--muted:#9aa3b2;"
-               "--faint:#6f7889;--border:#2a303b;--border-strong:#39414f;--accent:#7d9bff;--accent-ink:#0e1420;"
-               "--accent-strong:#9fb5ff;--tint:#1c2540;--review:#f3c06b;--review-bg:#3a2e14;--origin:#ff8a65;"
-               "--origin-bg:#3b2219;--ok:#4fd1a0;--ok-bg:#15302a;--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -14px rgba(0,0,0,.7)}"
-               'header[data-testid="stHeader"]{background:rgba(15,18,23,.82)}')
+DARK_TOKENS = (":root{--canvas:#161616;--surface:#262626;--surface-2:#393939;--ink:#f4f4f4;--muted:#c6c6c6;"
+               "--faint:#8d8d8d;--border:#393939;--border-strong:#525252;--accent:#4589ff;--accent-ink:#161616;"
+               "--accent-strong:#78a9ff;--tint:#001d6c;--review:#f1c21b;--review-bg:#2d2500;--origin:#ff832b;--origin-fill:#ff832b;"
+               "--origin-bg:#3a1e00;--ok:#42be65;--ok-bg:#0a2f16;--focus:#ffffff}")
+# Streamlit keys the stored choice by page path ("stActiveTheme-<pathname>-v2"), so the switch
+# writes every page's key; otherwise the choice would apply to one page only.
+THEME_STORE_KEY = "stActiveTheme-%s-v2"
+THEME_STORE_VALUES = {"light": '"Light"', "dark": '"Dark"'}
 
 PAGES = {
-    "home": ("views/home.py", "Overview"),
+    "home": ("views/home.py", "Start"),
     "cases": ("views/cases.py", "Cases"),
     "investigate": ("views/investigate.py", "Investigate"),
     "evidence": ("views/evidence.py", "Evidence"),
     "decide": ("views/decide.py", "Decide"),
     "status": ("views/status.py", "System status"),
+    "about": ("views/about.py", "How it works"),
 }
 STEPS = [("cases", "Choose a case"), ("investigate", "Follow the money"),
          ("evidence", "Weigh the evidence"), ("decide", "Record a decision")]
@@ -99,16 +103,39 @@ def reveal(inner_html, delay=0):
 
 
 def page_frame():
-    """Stylesheet, brand mark and the motion script. Called once per run from app.py."""
+    """Stylesheet, brand mark, theme switch and the motion script. Called once per run from app.py."""
+    active = theme()
     css = (HERE / "styles.css").read_text()
-    if theme() == "dark":
+    if active == "dark":
         css += DARK_TOKENS
     html("<style>" + css + "</style>")
-    st.logo(str(HERE / "assets" / "wordmark.svg"), icon_image=str(HERE / "assets" / "mark.svg"), size="large")
+    mark = "wordmark-dark.svg" if active == "dark" else "wordmark.svg"
+    st.logo(str(HERE / "assets" / mark), icon_image=str(HERE / "assets" / "mark.svg"), size="large")
     with st.container(key="motion"):
         st.iframe("<script>%s</script>" % (HERE / "motion.js").read_text(), height=1)
+    theme_switch(active)
     if "flash" in st.session_state:
         st.success(fmt.md(st.session_state.pop("flash")))
+
+
+def theme_switch(active):
+    """One button that stores the other theme the way Streamlit's own menu does, then reloads."""
+    wanted = "light" if active == "dark" else "dark"
+    with st.container(key="utility", horizontal=True, horizontal_alignment="right"):
+        if st.button("Switch to %s mode" % wanted, key="theme-switch",
+                     icon=":material/light_mode:" if wanted == "light" else ":material/dark_mode:"):
+            st.session_state["theme_request"] = wanted
+    requested = st.session_state.pop("theme_request", None)
+    if requested:
+        keys = [THEME_STORE_KEY % path for path in theme_store_paths()]
+        with st.container(key="themeio"):
+            st.iframe("<script>try{var s=window.parent.localStorage;%s;window.parent.location.reload();}catch(e){}</script>"
+                      % ";".join("s.setItem(%r,%r)" % (key, THEME_STORE_VALUES[requested]) for key in keys), height=1)
+
+
+def theme_store_paths():
+    """One local-storage path per page: '/' for the entry page, '/<key>' for the others."""
+    return ["/"] + ["/" + key for key in PAGES if key != "home"]
 
 
 def selected_id():

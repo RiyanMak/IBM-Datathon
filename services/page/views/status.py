@@ -33,13 +33,12 @@ def diagnostics():
     cols = st.columns(3)
     for n, tile in enumerate(tiles):
         with cols[n % 3]:
-            st.markdown("**%s:** %s" % (fmt.md(tile.label), fmt.md(tile.value if known else fmt.DASH)))
-            st.caption(fmt.md(tile.help))
+            ui.html('<div class="tile"><div class="l">%s</div><strong>%s</strong><div class="h">%s</div></div>' % (
+                escape(tile.label), escape(tile.value if known else fmt.DASH), escape(tile.help)))
     if snap.skipped:
         st.warning(fmt.md("Malformed messages skipped: " + str(snap.skipped)))
 
 
-ui.section("Runtime", "")
 st.markdown("## System status")
 st.caption("Everything here describes this session and the stream windows it reads. Nothing here is a model result.")
 diagnostics()

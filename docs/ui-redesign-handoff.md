@@ -2,20 +2,23 @@
 
 ## Direction
 
-A light, composed workspace: cool off-white canvas, white surfaces, one cobalt accent for selection
-and primary actions, amber for "requires review", coral for the inferred origin account and green for
-the inferred final recipient. The product is organised as a landing overview plus one page per
-investigation step, with a step rail and a case context bar carrying the selected case across pages.
-Motion explains change rather than decorating: reveal-on-scroll on the overview, a short page-enter
-transition, hover/press states, and a slow traveling pulse on the hero diagram. Everything is static
-under `prefers-reduced-motion`.
+An internal investigation tool in IBM's visual language (Carbon): IBM Plex Sans, square corners,
+hairline grid lines, flat white/gray tiles, Blue 60 (#0F62FE) as the only interactive colour, amber
+for "requires review", Carbon orange for the inferred origin account and Carbon green for the inferred
+final recipient. Light (Gray 10) and dark (Gray 100) themes are both configured; a header button
+switches between them. The entry page is a single leadspace: name, one-line purpose, the animated
+origin-to-recipient flow, and one primary action into the queue. Explanatory material lives on a
+separate "How it works" page so the working pages stay direct. Motion follows Carbon's productive
+easing: reveal-on-scroll, a 240 ms page transition, hover/press states, and a slow traveling pulse
+on the entry diagram. Everything is static under `prefers-reduced-motion`.
 
 ## Main files
 
-- `.streamlit/config.toml`: pinned light palette for both theme variants, minimal toolbar.
+- `.streamlit/config.toml`: Carbon light and dark themes, IBM Plex, square radii, viewer toolbar.
 - `services/page/app.py`: entry; `st.navigation(position="top")` over `services/page/views/`.
 - `services/page/ui.py`: shared snapshot/theme helpers, case bar, step rail, status pills, motion frame.
-- `services/page/views/home.py`: hero, live status strip, pipeline, chapter cards.
+- `services/page/views/home.py`: entry leadspace with the flow animation and the Start button.
+- `services/page/views/about.py`: How it works: pipeline, four steps, boundaries.
 - `services/page/views/cases.py`: queue with filters, card-style options, selected-case preview.
 - `services/page/views/investigate.py`: graph, inspector, transfer list, step links.
 - `services/page/views/evidence.py`: reasons, scores, observations, explanation and its history.
@@ -38,4 +41,4 @@ under `prefers-reduced-motion`.
 
 - Fixture mode only; no Granite call, replay progress or bank enforcement. Scores are fixture inputs.
 - The top navigation collapses into a menu below roughly 850 px; the graph needs horizontal scroll there.
-- Theme switching from the Streamlit menu shows the same light palette by design.
+- The theme switch writes Streamlit's own local-storage key and reloads; it is per browser.
