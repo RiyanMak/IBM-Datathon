@@ -156,6 +156,7 @@ Test precision, recall, F1 and PR-AUC for XGBoost and the $10,000 baseline; GNN 
 
 - Split cutoffs: validation starts `2022-09-06T13:36:00`, test starts `2022-09-08T16:12:00`. Train 3,046,861 rows (2,297 laundering), validation 1,015,602 (1,082), test 1,015,882 (1,798).
 - Shared files on the VM: `~/shared/data/` for `clean.csv`, `splits.json`, `fx_rates.json`, `features.csv`; `~/shared/models/` for `scorer.json`, `feature_list.json`, `thresholds.json`, `gnn.npz`, `gnn_meta.json`. Inside containers these are `/data/data/` and `/data/models/` (`common/paths.py`).
+- On s390x, pandas crashes (segmentation fault) when `to_datetime` has to guess the format. Always pass `format="ISO8601"` or an explicit pattern; every production path does.
 - No parquet anywhere: the VM image has no pyarrow. Read `clean.csv` with `common.clean_transactions.read_clean_csv`, which restores column types.
 - Stream names and the Redis host come from `common/bus.py`; the `txns` message format from `common/streams.py`.
 - The raw CSV is 476 MB and the clean CSV 917 MB; both go to the VM by scp, not the Jupyter upload button (200 MB limit).
