@@ -20,6 +20,8 @@ RUN for pkg in streamlit ibm-watsonx-ai snapml; do \
 
 COPY common/ ./common/
 COPY services/ ./services/
+COPY scripts/ ./scripts/
+COPY tests/ ./tests/
 
 # The image's non-root user (uid 1000); ~/shared on the VM is mounted as /data.
 USER ibm-user
