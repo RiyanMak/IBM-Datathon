@@ -11,7 +11,7 @@ Updated October 17, 2026, after the replayer, case writer and investigator page 
 | 5 Case writer (`services/casewriter/`) | Done. |
 | 6 Investigator page (`services/page/`) | Done. |
 | Training (`notebooks/train_xgboost.ipynb`) | Run on the VM: test F1 0.63, PR-AUC 0.64. Retrain once after the clue-class fix (integer-cent sums) is merged. |
-| Platform (`Dockerfile`, `docker-compose.yml`) | Dockerfile fixed (real image, `ibm-user`, tolerant optional installs). Compose not yet run on the VM. |
+| Platform (`Dockerfile`, `docker-compose.yml`) | Dockerfile fixed (real image, `ibm-user`, tolerant optional installs). Compose has Redis health gating, restart policies, optional `.env`, and the replayer behind the `replay` profile so it starts after the scorer's warm-up. Not yet run on the VM. |
 
 Nothing flows end to end until the scorer and the ring service exist.
 

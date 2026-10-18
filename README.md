@@ -7,6 +7,19 @@ Mule Ring Hunter: catches money-mule rings in real time. The AI recommends and e
 IBM Transactions for Anti Money Laundering (HI-Small). Synthetic data, no real customers.
 https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml
 
+## Run the stack on the VM
+
+Needs `~/shared/data/clean.csv` and `splits.json` (from the cleaning below) and `~/shared/models/` (from `notebooks/train_xgboost.ipynb`). From the repo root on the VM:
+
+```bash
+docker compose up -d --build                      # Redis, scorer, ring service, case writer, page
+docker compose logs -f scorer                     # wait for "scoring 'txns' -> 'scored'": the warm-up takes a few minutes
+docker compose --profile replay up -d replayer    # then start the replay of the test period
+ssh -L 8501:localhost:8501 linux1@<vm-ip>         # from your laptop, then open http://localhost:8501
+```
+
+`docker compose --profile replay ps` lists all six containers; `docker compose up -d --scale scorer=3` runs three scorers on one queue. Each service has a README in `services/<name>/`.
+
 ## Data cleaning
 
 The cleaning pipeline turns `HI-Small_Trans.csv` into one typed, time-sorted table and a few reports. It never edits the raw file and never auto-fixes data: if something breaks the data contract, the run stops with exit code 1 and explains why in `data_quality.md`.

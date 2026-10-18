@@ -1,58 +1,90 @@
 # Services reach Redis at host name "redis". ~/shared on the VM is /data inside,
 # so data files are in /data/data and models in /data/models (common/paths.py).
 #
-#   docker compose up -d --build
-#   docker compose ps
-#   docker compose logs -f scorer
-#   docker compose up -d --scale scorer=3
-#   docker compose down
+#   docker compose up -d --build                      build and start Redis, scorer, rings, case writer, page
+#   docker compose logs -f scorer                     wait for "scoring 'txns' -> 'scored'" (warm-up takes a few minutes)
+#   docker compose --profile replay up -d replayer    then start the replay
+#   docker compose --profile replay ps                what's running (screenshot this)
+#   docker compose up -d --scale scorer=3             three scorers sharing the work
+#   docker compose --profile replay down              stop everything
+#
+# The replayer is behind the "replay" profile on purpose: at speed 600 it sends
+# the whole test period in about six minutes, so it must start after the scorer
+# has finished warming up, or the demo shows a backlog instead of live scoring.
+# To start the replay a few data-hours before a known ring:
+#   docker compose --profile replay run --rm replayer python -m services.replayer.main --start 2022-09-09T06:00:00
 
 services:
   redis:
     image: docker.io/library/redis:7
-    # No published port on purpose.
+    # No published port on purpose: only reachable inside this network.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
 
   replayer:
     build: .
-    command: python -m services.replayer.main
+    profiles: ["replay"]
+    # --resume: after a crash or restart, continue after the last transfer already sent
+    command: python -m services.replayer.main --resume
     environment:
       - SPEED=${SPEED:-600}
     volumes:
       - ~/shared:/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    restart: on-failure
 
   scorer:
     build: .
     command: python -m services.scorer.main
+    # XGBoost threads per scorer; the VM has 3 cores and three scorers may run
+    environment:
+      - NTHREAD=${NTHREAD:-1}
     volumes:
       - ~/shared:/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   rings:
     build: .
+    # run exactly one: the 24 h window and the ring ids live in its memory
     command: python -m services.rings.main
     volumes:
       - ~/shared:/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   casewriter:
     build: .
     command: python -m services.casewriter.main
-    env_file: .env
+    # watsonx credentials; without a .env the case writer uses the template only
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ~/shared:/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   page:
     build: .
     command: streamlit run services/page/app.py --server.port 8501 --server.address 0.0.0.0 --client.toolbarMode minimal --browser.gatherUsageStats false
     ports:
-      - "127.0.0.1:8501:8501"
+      - "127.0.0.1:8501:8501"   # reach it through an SSH tunnel; never publish it
     volumes:
       - ~/shared:/data
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
