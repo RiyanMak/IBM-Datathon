@@ -383,6 +383,7 @@ Team DevMaxx, IBM Z Datathon 2026. Everything in this repository was written dur
 | [Aryan Sanojraj](https://github.com/SJAryan) | reviewer bot: Slack and console adapters, suppression, decisions, the case packet, the demo runbook |
 | [Kevin](https://github.com/Kevin-A101) | the page's IBM Carbon redesign: theme, step rail, the flow component and its play-through |
 | [Ayan Prasla](https://github.com/Ap9801) | the stand-alone GNN ring re-scorer in `services/gnn/`, the case writer's wording and its contract with the other steps |
+| [Claude Code](https://claude.com/claude-code) | AI pair programmer used throughout the event: drafting and reviewing code and tests, the s390x debugging, the documentation and this README |
 
 Thanks to the IBM Z Datathon organisers and the LinuxONE Community Cloud team for the VM and the s390x Jupyter image this runs on.
 
