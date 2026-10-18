@@ -7,7 +7,7 @@ Updated October 17, 2026, after the replayer, case writer and investigator page 
 | Cleaning (`scripts/clean_data.py`) | Done. Verified on the real file: 5,078,345 rows, 5,177 laundering. |
 | 1 Replayer (`services/replayer/`) | Done. Tested against a real Redis with the real clean file. |
 | 2+3 Scorer (`services/scorer/`) | Done. Tested with the replayer on a real Redis: keeps up with speed 600 on a laptop, p99 latency 38 ms. |
-| 4 Rings + GNN (`services/rings/`) | **Not started.** |
+| 4 Rings + GNN (`services/rings/`) | Grouping done (window, union-find, hubs, Louvain, shapes, stable ids). Tested behind the scorer on a real Redis; the case writer and page read its output. GNN not started. |
 | 5 Case writer (`services/casewriter/`) | Done. |
 | 6 Investigator page (`services/page/`) | Done. |
 | Training (`notebooks/train_xgboost.ipynb`) | Run on the VM: test F1 0.63, PR-AUC 0.64. Retrain once after the clue-class fix (integer-cent sums) is merged. |
