@@ -1,6 +1,6 @@
 # Model improvement plan (hand-off for a fresh session)
 
-Written October 17, 2026, late evening. Read this with `docs/next-steps.md` (pipeline status) and the research report at `docs/research-model-training.md` (outside the repo on purpose).
+Written October 17, 2026, late evening. Read this with `docs/next-steps.md` (pipeline status) and the research report at `docs/research-model-training.md`.
 
 ## Where things stand
 
