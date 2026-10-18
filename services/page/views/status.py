@@ -39,6 +39,6 @@ def diagnostics():
         st.warning(fmt.md("Malformed messages skipped: " + str(snap.skipped)))
 
 
-st.markdown("## System status")
+st.markdown("## System Status")
 st.caption("Everything here describes this session and the stream windows it reads. Nothing here is a model result.")
 diagnostics()

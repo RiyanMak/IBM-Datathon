@@ -66,14 +66,16 @@ Start over with `python -m services.page.fake.feed --reset --decisions` (it refu
 
 The application is one frame with one page per step, reached from the top navigation:
 **Start** (entry page with the flow animation and one button into the workspace), **Cases** (01),
-**Investigate** (02), **Evidence** (03), **Decide** (04), **System status** (diagnostics) and
-**How it works** (pipeline and the four steps for first-time viewers). The step indicator and
+**Investigate** (02), **Evidence** (03), **Decide** (04), **System Status** (diagnostics) and
+**How It Works** (pipeline and the four steps for first-time viewers). The step indicator and
 the case context bar keep the selected case consistent across pages.
 
 Visual language follows IBM Carbon: IBM Plex Sans, square corners, hairline grids, flat tiles,
 Blue 60 as the single interactive colour, Gray 10 (light) and Gray 100 (dark) themes defined in
-`.streamlit/config.toml`. The **Switch to dark/light mode** button stores the choice the way
-Streamlit's own settings menu does and reloads; the page tokens and the graph follow. Motion is
+`.streamlit/config.toml`. The sun/moon toggle in the header stores the choice the way Streamlit's
+own settings menu does (one local-storage key per page path) and reloads; the page tokens and
+the graph follow. **Play flow** in the graph toolbar replays the drawn transfers in dataset-time
+order with a traveling pulse, so a case can be watched end to end without selecting nodes. Motion is
 limited to reveal-on-scroll on How it works, a short page transition, and state transitions,
 all disabled under `prefers-reduced-motion`.
 

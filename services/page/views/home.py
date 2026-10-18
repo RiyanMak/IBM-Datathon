@@ -45,7 +45,7 @@ def foot():
 
 
 entry = st.container(key="entry")
-left, right = entry.columns([5, 7], gap="large", vertical_alignment="center")
+left, right = entry.columns([4.6, 7.4], gap="large", vertical_alignment="center")
 with left:
     ui.html('<div class="eyebrow">IBM Z Datathon · UT Dallas</div>'
             '<h1 class="display">Mule Ring <em>Hunter</em></h1>'

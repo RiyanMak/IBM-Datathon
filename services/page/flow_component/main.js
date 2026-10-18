@@ -14,6 +14,7 @@
     return item;
   };
   const choose = key => {
+    if (typeof stopPlay === "function") stopPlay();
     selected = key;
     highlight();
     send("streamlit:setComponentValue", {value:{key, nonce:Date.now()+":"+Math.random()},dataType:"json"});
@@ -57,6 +58,7 @@
     selected = data.selection || "overview";
     const signature = JSON.stringify([data.nodes,data.edges]);
     if (signature !== previous) {
+      if (typeof stopPlay === "function") stopPlay();
       const focused = document.activeElement?.dataset?.key;
       svg.replaceChildren();
       svg.setAttribute("viewBox", `0 0 ${data.width} ${data.height}`);
@@ -83,9 +85,10 @@
           path = `M ${ax} ${ay} Q ${(ax+bx)/2-dy/length*bend} ${(ay+by)/2+dx/length*bend} ${bx} ${by}`;
         }
         const group = el("g", {class:"edge",tabindex:0,role:"button","aria-label":"Inspect transfer: "+e.label,"data-key":e.key});
-        group.append(el("title",{},e.label), el("path",{class:"line",d:path,"marker-end":"url(#arrow)"}),el("path",{class:"hit",d:path}));
+        group.append(el("title",{},e.label), el("path",{class:"line",id:"edge-"+data.edges.indexOf(e),d:path,"marker-end":"url(#arrow)"}),el("path",{class:"hit",d:path}));
         activate(group,e.key); svg.append(group);
       }
+      svg.append(el("g",{id:"pulses"}));
       for (const n of data.nodes) {
         const role = n.role === "origin" ? " origin" : n.role === "endpoint" ? " endpoint" : "";
         const roleText = n.role === "origin" ? "Origin" : n.role === "endpoint" ? "Final recipient" : "";
@@ -105,6 +108,43 @@
     document.body.classList.toggle("dark", event.data.args.theme === "dark");
     render(event.data.args.graph);
   });
+  /* Play-through: one pulse per drawn transfer, in dataset-time order, so the whole flow can be
+   * watched without selecting nodes. Reduced motion steps the highlight without moving pulses. */
+  const playButton = document.getElementById("play");
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let timers = [];
+  const stopPlay = () => {
+    timers.forEach(clearTimeout); timers = [];
+    document.getElementById("pulses")?.replaceChildren();
+    svg.querySelectorAll(".playing,.played,.lit").forEach(n => n.classList.remove("playing","played","lit"));
+    playButton.textContent = "▶ Play flow"; playButton.setAttribute("aria-pressed","false");
+  };
+  const startPlay = () => {
+    stopPlay();
+    const order = data.edges.map((e,i) => ({e,i})).sort((a,b) => (a.e.ts||"").localeCompare(b.e.ts||"") || a.i-b.i);
+    if (!order.length) return;
+    playButton.textContent = "■ Stop"; playButton.setAttribute("aria-pressed","true");
+    const gap = reduceMotion ? 420 : 520, travel = 720;
+    const groups = [...svg.querySelectorAll(".edge")];
+    const nodes = new Map([...svg.querySelectorAll(".node")].map(n => [n.dataset.id, n]));
+    order.forEach(({e,i}, step) => {
+      timers.push(setTimeout(() => {
+        const group = groups[i];
+        group.classList.add("playing"); nodes.get(e.src)?.classList.add("lit");
+        if (!reduceMotion) {
+          const pulse = el("circle",{class:"flow-pulse",r:5});
+          const motion = el("animateMotion",{dur:travel+"ms",fill:"freeze",begin:"indefinite"});
+          motion.append(el("mpath",{href:"#edge-"+i})); pulse.append(motion);
+          document.getElementById("pulses").append(pulse);
+          motion.beginElement();
+          timers.push(setTimeout(() => pulse.remove(), travel + 40));
+        }
+        timers.push(setTimeout(() => { group.classList.remove("playing"); group.classList.add("played"); nodes.get(e.dst)?.classList.add("lit"); }, reduceMotion ? gap - 40 : travel));
+      }, step * gap));
+    });
+    timers.push(setTimeout(() => { playButton.textContent = "↻ Replay"; playButton.setAttribute("aria-pressed","false"); }, order.length * gap + travel));
+  };
+  playButton.onclick = () => (playButton.getAttribute("aria-pressed") === "true" ? stopPlay() : startPlay());
   document.getElementById("zoom-in").onclick = () => {zoom=Math.min(3,zoom+.25);size();};
   document.getElementById("zoom-out").onclick = () => {zoom=Math.max(1,zoom-.25);size();};
   document.getElementById("fit").onclick = () => {zoom=1;viewport.scrollTo(0,0);size();};

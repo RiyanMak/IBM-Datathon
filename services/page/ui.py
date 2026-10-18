@@ -19,7 +19,7 @@ SORTS = {"Highest score": "score", "Newest data": "newest"}
 DARK_TOKENS = (":root{--canvas:#161616;--surface:#262626;--surface-2:#393939;--ink:#f4f4f4;--muted:#c6c6c6;"
                "--faint:#8d8d8d;--border:#393939;--border-strong:#525252;--accent:#4589ff;--accent-ink:#161616;"
                "--accent-strong:#78a9ff;--tint:#001d6c;--review:#f1c21b;--review-bg:#2d2500;--origin:#ff832b;--origin-fill:#ff832b;"
-               "--origin-bg:#3a1e00;--ok:#42be65;--ok-bg:#0a2f16;--focus:#ffffff}")
+               "--origin-bg:#3a1e00;--ok:#42be65;--ok-bg:#0a2f16;--focus:#ffffff;--grid:rgba(244,244,244,.06)}")
 # Streamlit keys the stored choice by page path ("stActiveTheme-<pathname>-v2"), so the switch
 # writes every page's key; otherwise the choice would apply to one page only.
 THEME_STORE_KEY = "stActiveTheme-%s-v2"
@@ -31,8 +31,8 @@ PAGES = {
     "investigate": ("views/investigate.py", "Investigate"),
     "evidence": ("views/evidence.py", "Evidence"),
     "decide": ("views/decide.py", "Decide"),
-    "status": ("views/status.py", "System status"),
-    "about": ("views/about.py", "How it works"),
+    "status": ("views/status.py", "System Status"),
+    "about": ("views/about.py", "How It Works"),
 }
 STEPS = [("cases", "Choose a case"), ("investigate", "Follow the money"),
          ("evidence", "Weigh the evidence"), ("decide", "Record a decision")]
@@ -119,18 +119,18 @@ def page_frame():
 
 
 def theme_switch(active):
-    """One button that stores the other theme the way Streamlit's own menu does, then reloads."""
-    wanted = "light" if active == "dark" else "dark"
+    """A sun/moon toggle pinned to the header. It stores the other theme the way Streamlit's own
+    menu does, then reloads; styles.css positions the container top right."""
     with st.container(key="utility", horizontal=True, horizontal_alignment="right"):
-        if st.button("Switch to %s mode" % wanted, key="theme-switch",
-                     icon=":material/light_mode:" if wanted == "light" else ":material/dark_mode:"):
-            st.session_state["theme_request"] = wanted
-    requested = st.session_state.pop("theme_request", None)
-    if requested:
+        dark = st.toggle(":material/dark_mode:" if active == "dark" else ":material/light_mode:",
+                         value=active == "dark", key="theme-toggle",
+                         help="Switch between light and dark mode")
+    wanted = "dark" if dark else "light"
+    if wanted != active:
         keys = [THEME_STORE_KEY % path for path in theme_store_paths()]
         with st.container(key="themeio"):
             st.iframe("<script>try{var s=window.parent.localStorage;%s;window.parent.location.reload();}catch(e){}</script>"
-                      % ";".join("s.setItem(%r,%r)" % (key, THEME_STORE_VALUES[requested]) for key in keys), height=1)
+                      % ";".join("s.setItem(%r,%r)" % (key, THEME_STORE_VALUES[wanted]) for key in keys), height=1)
 
 
 def theme_store_paths():

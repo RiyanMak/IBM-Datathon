@@ -147,7 +147,7 @@ def graph_data(ring, selection="overview", positions=None):
                 y += 76
             saved[a] = [x, y]
             occupied.add((x, y))
-    links = [{"key": k, "src": e.src, "dst": e.dst,
+    links = [{"key": k, "src": e.src, "dst": e.dst, "ts": e.ts or "",
               "label": "%s → %s · %s estimated USD · %s" % (
                   e.src, e.dst, graph.money(e.amount_usd), fmt.data_time(e.ts))}
              for k, e in chosen]

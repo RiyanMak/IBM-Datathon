@@ -39,7 +39,7 @@ def chapters():
             st.page_link(ui.PAGES[key][0], label="Open", icon=":material/arrow_forward:")
 
 
-st.markdown("## How it works")
+st.markdown("## How It Works")
 st.caption("Transaction replay → suspicious-payment scoring → connected-account investigation → evidence-based explanation → human decision.")
 pipeline()
 chapters()

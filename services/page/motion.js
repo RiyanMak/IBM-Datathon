@@ -24,7 +24,21 @@
     void main.offsetWidth;
     main.classList.add("page-enter");
   };
+  const countUp = node => {
+    const target = Number(String(node.textContent).replace(/,/g, ""));
+    if (reduce || !Number.isFinite(target) || target === 0 || node.dataset.counted) return;
+    node.dataset.counted = "1";
+    const start = performance.now(), ms = 700;
+    const step = now => {
+      const t = Math.min(1, (now - start) / ms), eased = 1 - Math.pow(1 - t, 3);
+      node.textContent = Math.round(target * eased).toLocaleString();
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
   const tick = () => {
+    doc.body.classList.toggle("is-entry", doc.location.pathname === "/");
+    doc.querySelectorAll(".entry-foot strong:not([data-counted])").forEach(countUp);
     if (doc.location.pathname !== path) { path = doc.location.pathname; enter(); }
     const header = doc.querySelector('header[data-testid="stHeader"]');
     if (header) header.classList.toggle("is-scrolled", (doc.scrollingElement || doc.documentElement).scrollTop > 8 ||

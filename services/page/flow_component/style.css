@@ -42,3 +42,10 @@ svg { display:block; width:100%; min-width:440px; height:380px; }
 .dim { opacity:.28; }
 @media (max-width:500px) { .toolbar,.footer { padding:10px; } .legend { font-size:11px; gap:8px; } }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; animation:none!important; } }
+button.play { border-color:var(--accent); color:var(--accent); font-weight:500; margin-right:8px; }
+button.play[aria-pressed="true"] { background:var(--accent); color:var(--accent-ink); }
+.edge.played .line { stroke:var(--accent); stroke-width:2.6; }
+.edge.playing .line { stroke:var(--accent); stroke-width:3.4; }
+.node.lit circle:not(.outer) { stroke:var(--accent); stroke-width:3; }
+.flow-pulse { fill:var(--accent); stroke:var(--surface); stroke-width:1.5; pointer-events:none; }
+.flow-count { font:600 11px "IBM Plex Sans",system-ui,sans-serif; fill:var(--muted); }

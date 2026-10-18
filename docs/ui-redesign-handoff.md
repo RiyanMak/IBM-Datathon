@@ -26,7 +26,7 @@ on the entry diagram. Everything is static under `prefers-reduced-motion`.
 - `services/page/views/status.py`: connection, windows, counters, retry.
 - `services/page/styles.css`, `motion.js`, `assets/`: tokens, composition, motion, brand marks.
 - `services/page/workspace.py`: `roles()` infers origin / final recipient for the graph.
-- `services/page/flow_component/`: role-aware nodes, new legend, new palette.
+- `services/page/flow_component/`: role-aware nodes, legend, Carbon palette, and the Play flow replay (pulses along transfers in dataset-time order; stepped highlight under reduced motion).
 - `Dockerfile`: copies `.streamlit/` so the container uses the same theme.
 
 ## Verification record (2026-10-17)
@@ -41,4 +41,5 @@ on the entry diagram. Everything is static under `prefers-reduced-motion`.
 
 - Fixture mode only; no Granite call, replay progress or bank enforcement. Scores are fixture inputs.
 - The top navigation collapses into a menu below roughly 850 px; the graph needs horizontal scroll there.
-- The theme switch writes Streamlit's own local-storage key and reloads; it is per browser.
+- The header sun/moon toggle writes Streamlit's per-page local-storage keys and reloads; it is per browser.
+- The entry page's grid-and-glow background is CSS only, toggled by a body class from motion.js.

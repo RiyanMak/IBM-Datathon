@@ -82,9 +82,9 @@ def test_how_it_works_page_explains_the_pipeline(r):
     assert any("How a transfer becomes a case" in m.value for m in at.markdown)
 
 
-def test_theme_switch_button_is_offered(r):
+def test_theme_toggle_is_offered(r):
     at = run()
-    assert any(b.label.startswith("Switch to") for b in at.button)
+    assert any(t.key == "theme-toggle" for t in at.toggle)
 
 
 def test_redis_down_shows_banner(monkeypatch):
