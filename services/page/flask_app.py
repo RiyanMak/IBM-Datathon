@@ -26,7 +26,7 @@ from redis.backoff import NoBackoff
 from redis.retry import Retry
 
 from common import bus
-from services.page import decisions, fmt, graph, packet_export, state
+from services.page import decisions, fmt, granite_requests, graph, packet_export, state
 from services.page.models import PageState, decision_label, shape_label
 
 REFRESH_MS = 2000
@@ -70,8 +70,21 @@ def snapshot_json(snap: PageState) -> dict:
     }
 
 
+_granite_throttle = granite_requests.Throttle()   # one request per ring version per 45 s
+
+
 def ring_json(r, snap: PageState, ring) -> dict:
     case = snap.cases.get(ring.ring_id)
+    if case is None:
+        try:
+            case = state.latest_case(r, ring.ring_id)   # outside the stream window: the hash
+        except Exception:
+            case = None
+    if granite_requests.wanted(case):
+        try:
+            _granite_throttle.request(r, ring.ring_id, ring.version, "flask")
+        except Exception:
+            pass
     pic = graph.build(ring, case.facts if case else None, "light")
     try:
         history = state.case_history(r, ring.ring_id)
@@ -88,6 +101,7 @@ def ring_json(r, snap: PageState, ring) -> dict:
             "source": case.source, "source_label": case.source_label, "is_granite": case.is_granite,
             "check_note": case.check_note, "written_at": fmt.wall_time(case.written_at),
             "version": case.version, "parts": [{"label": p.label, "text": p.text} for p in case.parts],
+            "granite_writing": granite_requests.granite_expected(case),
         } if case else None,
         "history": [{"version": c.version, "source_label": c.source_label,
                      "written_at": fmt.wall_time(c.written_at), "check_note": c.check_note}
@@ -261,6 +275,7 @@ async function loadDetail() {
       <p class="muted" style="font-size:13px">Computed by our code from the ring. The fact check rejects any Granite summary that uses a number not in this set.</p>` : "";
   const c = d.case;
   const summary = c ? `<span class="badge ${c.is_granite ? "granite" : "template"}" title="${esc(c.check_note || "no note")} · written ${esc(c.written_at)}">${esc(c.source_label)}</span>
+      ${c.granite_writing ? `<p class="muted" style="font-size:13px">Granite is writing an explanation; the template and the numbers below stand in meanwhile.</p>` : ""}
       ${c.version !== d.version ? `<p class="muted" style="font-size:13px">Written for version ${c.version}; the ring is now at version ${d.version}.</p>` : ""}
       ${c.parts.map(p => `<p><strong>${esc(p.label)}</strong><br>${esc(p.text)}</p>`).join("")}
       ${d.history.length > 1 ? `<details><summary class="muted">Case history (${d.history.length})</summary>${d.history.map(h => `<div class="muted" style="font-size:13px">Version ${h.version} · ${esc(h.source_label)} · ${esc(h.written_at)} · ${esc(h.check_note || "no note")}</div>`).join("")}</details>` : ""}`

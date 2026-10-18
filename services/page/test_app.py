@@ -36,13 +36,19 @@ def add_ring(r, ring_id="R-1", version=1, reasons=("money left 40 minutes after 
     })
 
 
-def add_case(r, ring_id="R-1", version=1, summary=None, source="template"):
-    r.xadd(bus.CASES, {
+def add_case(r, ring_id="R-1", version=1, summary=None, source="template", note="granite not used",
+             stream=True):
+    """A case on the stream, or (stream=False) only in the case writer's hash, as for a
+    ring that a busy replay has pushed out of the page's stream window."""
+    fields = {
         "ring_id": ring_id, "version": str(version),
         "summary": json.dumps(summary or {"summary": "s"}), "source": source,
-        "check_note": "granite not used", "written_at": "2026-10-17T10:00:00",
+        "check_note": note, "written_at": "2026-10-17T10:00:00",
         "facts": json.dumps({"key_account": "1_A"}),
-    })
+    }
+    if stream:
+        r.xadd(bus.CASES, fields)
+    r.hset("case:" + ring_id, mapping=fields)
 
 
 PAGES = {"cases": "views/cases.py", "investigate": "views/investigate.py",
@@ -268,6 +274,41 @@ def test_selection_survives_new_case_ranking(r):
     assert at.radio[0].value == "R-1"
     assert "R-1" in case_title(at)
     assert any("Update queue" in b.label for b in at.button)
+
+
+def test_opening_a_ring_asks_for_granite_and_shows_the_observations_meanwhile(r):
+    """A template case with Granite still to come: the page writes one request on
+    granite_requests, says Granite is writing, and shows the computed observations."""
+    add_ring(r)
+    add_case(r, note="granite on request")
+    at = run("evidence")
+    assert not at.exception
+    requests = r.xrange(bus.GRANITE_REQUESTS)
+    assert len(requests) == 1 and requests[0][1]["ring_id"] == "R-1" and requests[0][1]["version"] == "1"
+    assert any("Granite is writing an explanation" in t for t in texts(at))
+    assert any("Computer observations" in t for t in texts(at))
+    assert any("| Key account |" in t for t in texts(at))   # the facts table (account IDs are markdown-escaped)
+    # a refresh within 45 s does not ask again
+    at.run()
+    assert len(r.xrange(bus.GRANITE_REQUESTS)) == 1
+
+
+def test_granite_case_is_not_requested_again(r):
+    add_ring(r)
+    add_case(r, source="granite", note="passed fact check")
+    at = run("evidence")
+    assert not at.exception
+    assert r.xlen(bus.GRANITE_REQUESTS) == 0
+    assert not any("Granite is writing" in t for t in texts(at))
+
+
+def test_case_outside_the_stream_window_is_read_from_the_hash(r):
+    add_ring(r)
+    add_case(r, summary={"summary": "Held only in the hash."}, stream=False)
+    at = run("evidence")
+    assert not at.exception
+    assert not any("Summary coming" in t for t in texts(at))
+    assert any("Held only in the hash." in t for t in texts(at))
 
 
 def test_stale_summary_observations_are_not_presented_as_current(r):

@@ -15,12 +15,24 @@ Redis host and stream names come from common/bus.py (REDIS_HOST, default "redis"
 
 Granite is used automatically when the watsonx settings exist (see granite.py).
 Add --no-granite to force the template.
+
+When Granite runs (GRANITE_MODE):
+  on_demand (default)  every ring gets the template at once; Granite writes for a ring
+                       when someone opens it on the page (a message on `granite_requests`),
+                       and keeps that ring fresh for a few minutes afterwards. The demo
+                       never queues behind rings nobody is looking at.
+  all                  Granite also works through every other ring in the background,
+                       after the requested ones.
+GRANITE_WORKERS (default 3) Granite calls run side by side.
 """
 import argparse
 import json
+import os
+import queue
 import socket
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 
 from common import bus
@@ -31,9 +43,24 @@ from services.casewriter import granite
 
 IN_STREAM = bus.RINGS
 OUT_STREAM = bus.CASES
+REQUESTS_STREAM = bus.GRANITE_REQUESTS
 GROUP = "casewriter"
 CASE_KEY = "case:%s"              # latest case per ring, same fields as the stream message
 STATS_KEY = "stats:casewriter"    # cases_written, granite_tried, granite_passed
+
+MODE_ON_DEMAND, MODE_ALL = "on_demand", "all"
+PRIORITY_REQUEST, PRIORITY_BACKGROUND = 0, 1   # a requested ring goes before every background one
+WATCH_SECONDS = 180      # after a request, new versions of that ring keep getting Granite for this long
+RING_SCAN = 5000         # how far back the rings stream is searched for a requested ring not in memory
+
+# Notes the template case carries while Granite has not written (the page reads them)
+NOTE_PENDING = "granite pending"         # queued or being written now
+NOTE_ON_REQUEST = "granite on request"   # on_demand mode: Granite writes when someone opens the ring
+
+
+def granite_mode():
+    value = os.environ.get("GRANITE_MODE", MODE_ON_DEMAND).strip().lower()
+    return MODE_ALL if value in (MODE_ALL, "every", "background") else MODE_ON_DEMAND
 
 # Facts that move with the clock alone. Two facts packs that differ only in these keys
 # tell the same story, so the previous summary is reused instead of asking Granite again.
@@ -235,11 +262,52 @@ class Publisher:
         self.lock = threading.Lock()
         # ring_id -> {"story": facts without clock-only keys, "case": the best case for
         # that story, "from_version": the version that case's summary was written for,
-        # "latest": the last case published for the ring, "msg_id": its ring message ID}
+        # "latest": the last case published for the ring, "msg_id": its ring message ID,
+        # "fields": the ring message as received (what a Granite request is served from)}
         self.rings = {}
+        self.watched = {}   # ring_id -> wall time of the last request from the page
 
     def write_stats(self):
         self.r.hset(STATS_KEY, mapping=self.stats.fields())
+
+    def is_watched(self, ring_id, now=None):
+        """True while someone asked for this ring recently (new versions get Granite first)."""
+        asked = self.watched.get(ring_id)
+        return asked is not None and (now or time.time()) - asked < WATCH_SECONDS
+
+    def request(self, req, now=None):
+        """Serve one `granite_requests` message. Returns (fields, msg_id) of the ring to
+        send to Granite, or None when there is nothing to do: the ring's current story
+        already has a Granite summary, or the ring is unknown."""
+        ring_id = str(req.get("ring_id") or "").strip()
+        if not ring_id:
+            return None
+        now = now or time.time()
+        with self.lock:
+            self.watched[ring_id] = now
+            mem = self.rings.get(ring_id)
+            if mem is not None:
+                if mem["latest"]["source"] == "granite":
+                    return None   # the newest case already carries Granite's text
+                fields, msg_id = mem["fields"], mem["msg_id"]
+            else:
+                found = self._find_ring(ring_id)
+                if found is None:
+                    print("granite request for unknown ring %s" % ring_id, file=sys.stderr)
+                    return None
+                msg_id, fields = found
+            key = CASE_KEY % ring_id
+            if self.r.hmget(key, "source") == ["template"]:
+                self.r.hset(key, "check_note", NOTE_PENDING)
+        return fields, msg_id
+
+    def _find_ring(self, ring_id):
+        """The newest message for a ring on the rings stream (after a restart the memory
+        is empty), or None."""
+        for msg_id, fields in self.r.xrevrange(IN_STREAM, "+", "-", count=RING_SCAN):
+            if fields.get("ring_id") == ring_id:
+                return msg_id, fields
+        return None
 
     def _reuse(self, best, from_version, latest, msg_id):
         """The summary of `best`, re-sent on the ring version of `latest`."""
@@ -251,9 +319,11 @@ class Publisher:
                     written_after_s=seconds_since(msg_id, now.timestamp()))
         return case
 
-    def template_first(self, msg_id, fields, use_granite):
-        """Publish a case for one ring message at once. Returns True when Granite should
-        still be tried for it (new or changed facts, Granite on and not disabled)."""
+    def template_first(self, msg_id, fields, use_granite, mode=MODE_ALL):
+        """Publish a case for one ring message at once. Returns the priority Granite should
+        be tried with (new or changed facts, Granite on and not disabled), or None when
+        the template stands: nothing changed, Granite is off, or on_demand mode and nobody
+        has asked for this ring."""
         ring = parse_ring(fields)
         facts = build_facts(ring)
         story = same_story(facts)
@@ -263,26 +333,30 @@ class Publisher:
                 # nothing but the clock moved: the summary already written still holds
                 latest = case_message(ring, facts, {}, "", "", msg_id)
                 case = self._reuse(prev["case"], prev["from_version"], latest, msg_id)
-                prev.update(latest=case, msg_id=msg_id)
-                submit = False
+                prev.update(latest=case, msg_id=msg_id, fields=fields)
+                priority = None
             else:
+                watched = self.is_watched(ring["ring_id"])
                 if not use_granite:
-                    note = "granite not used"
+                    note, priority = "granite not used", None
                 elif granite.disabled_reason():
-                    note = "granite disabled: " + granite.disabled_reason()
+                    note, priority = "granite disabled: " + granite.disabled_reason(), None
+                elif watched:
+                    note, priority = NOTE_PENDING, PRIORITY_REQUEST
+                elif mode == MODE_ON_DEMAND:
+                    note, priority = NOTE_ON_REQUEST, None
                 else:
-                    note = "granite pending"
+                    note, priority = NOTE_PENDING, PRIORITY_BACKGROUND
                 case = case_message(ring, facts, template_summary(facts), "template", note, msg_id)
                 self.rings[ring["ring_id"]] = {"story": story, "case": case,
                                                "from_version": ring["version"],
-                                               "latest": case, "msg_id": msg_id}
-                submit = use_granite and not granite.disabled_reason()
+                                               "latest": case, "msg_id": msg_id, "fields": fields}
             self.stats.cases += 1
             store_case(self.r, case)
             self.write_stats()
         print("case for %s v%s (%s, %s)" % (case["ring_id"], case["version"], case["source"],
                                            case["check_note"]))
-        return submit
+        return priority
 
     def granite_result(self, fields, case, note):
         """Publish what the Granite worker found for one ring message."""
@@ -301,6 +375,8 @@ class Publisher:
             mem = self.rings.get(ring_id)
             if mem is not None and mem["story"] == same_story(json.loads(case["facts"])):
                 mem["case"], mem["from_version"] = case, version
+                if version_key(mem["latest"]["version"]) == version_key(version):
+                    mem["latest"] = case   # so a repeat request sees the ring is already done
                 if version_key(mem["latest"]["version"]) > version_key(version):
                     # newer versions with the same story went out while Granite worked;
                     # give the newest one the Granite text too
@@ -312,47 +388,108 @@ class Publisher:
 
 
 class GraniteWorker:
-    """Runs Granite for rings in the background and publishes the upgraded cases.
+    """Runs Granite for rings on a few threads and publishes the upgraded cases.
 
     The service publishes the template case at once, then hands the ring to this
-    worker. Granite on the VM's CPU can take tens of seconds per ring; the page shows
-    the template meanwhile and swaps in the Granite summary when it arrives. A ring
-    that arrives while the queue is full keeps its template (noted in the log).
+    worker. Requested rings (someone opened them on the page) go before background
+    ones, so a request is answered in one Granite call's time rather than after the
+    whole backlog. The same ring version is never in the queue twice. A ring that
+    arrives while the queue is full keeps its template (noted in the log).
     """
     QUEUE_SIZE = 200
 
-    def __init__(self, r, stats, granite_fn=None, publisher=None):
-        import queue
+    def __init__(self, r, stats, granite_fn=None, publisher=None, workers=None):
         self.r, self.stats, self.granite_fn = r, stats, granite_fn
         self.publisher = publisher or Publisher(r, stats)
-        self.queue = queue.Queue(maxsize=self.QUEUE_SIZE)
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
+        self.queue = queue.PriorityQueue(maxsize=self.QUEUE_SIZE)
+        self.lock = threading.Lock()
+        self.seq = 0                 # keeps the queue first-in-first-out within a priority
+        self.in_flight = set()       # (ring_id, version) queued or being written
+        count = workers if workers is not None else int(os.environ.get("GRANITE_WORKERS", "3") or 1)
+        self.threads = [threading.Thread(target=self._run, daemon=True) for _ in range(max(1, count))]
+        for t in self.threads:
+            t.start()
 
-    def submit(self, fields, msg_id=None):
+    def submit(self, fields, msg_id=None, priority=PRIORITY_BACKGROUND):
+        key = (str(fields.get("ring_id")), str(fields.get("version") or "1"))
+        with self.lock:
+            if key in self.in_flight:
+                return False
+            self.in_flight.add(key)
+            self.seq += 1
+            item = (priority, self.seq, fields, msg_id)
         try:
-            self.queue.put_nowait((fields, msg_id))
-        except Exception:
-            print("granite queue full: %s v%s keeps the template" % (fields.get("ring_id"), fields.get("version")),
-                  file=sys.stderr)
+            self.queue.put_nowait(item)
+            return True
+        except queue.Full:
+            with self.lock:
+                self.in_flight.discard(key)
+            print("granite queue full: %s v%s keeps the template" % key, file=sys.stderr)
+            return False
 
     def _run(self):
         while True:
-            item = self.queue.get()
-            if item is None:
+            _priority, _seq, fields, msg_id = self.queue.get()
+            if fields is None:
+                self.queue.task_done()
                 return
-            fields, msg_id = item
             try:
                 case, note = try_granite(fields, self.stats, self.granite_fn, msg_id)
                 self.publisher.granite_result(fields, case, note)
             except Exception as exc:
                 print("granite worker error: %s" % exc, file=sys.stderr)
             finally:
+                with self.lock:
+                    self.in_flight.discard((str(fields.get("ring_id")), str(fields.get("version") or "1")))
                 self.queue.task_done()
 
     def drain(self):
         """Wait for every queued ring (tests and shutdown)."""
         self.queue.join()
+
+
+class RequestListener:
+    """Reads `granite_requests` (the page writes one when an investigator opens a ring)
+    and hands each ring to the worker ahead of the background queue.
+
+    Only requests written after the service started count: an old request is for a
+    ring whose version has moved on, and the page asks again when it is still open.
+    """
+    def __init__(self, r, publisher, worker, start_id="$"):
+        self.r, self.publisher, self.worker = r, publisher, worker
+        self.last_id = start_id
+        self.stop = False
+        self.thread = None
+
+    def poll(self, block_ms=None):
+        """Serve the requests that arrived since the last call; returns how many were queued."""
+        reply = self.r.xread({REQUESTS_STREAM: self.last_id}, count=50, block=block_ms)
+        queued = 0
+        for _stream, messages in reply or []:
+            for msg_id, fields in messages:
+                self.last_id = msg_id
+                found = self.publisher.request(fields)
+                if found is not None:
+                    ring_fields, ring_msg_id = found
+                    if self.worker.submit(ring_fields, ring_msg_id, PRIORITY_REQUEST):
+                        queued += 1
+                        print("granite requested for %s v%s by %s" % (
+                            ring_fields.get("ring_id"), ring_fields.get("version"),
+                            fields.get("requested_by") or "page"))
+        return queued
+
+    def _run(self):
+        while not self.stop:
+            try:
+                self.poll(block_ms=1000)
+            except Exception as exc:   # Redis hiccup: wait a moment and keep listening
+                print("granite request listener: %s" % exc, file=sys.stderr)
+                time.sleep(1)
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        return self
 
 
 def coalesce(messages):
@@ -380,7 +517,12 @@ def coalesce(messages):
     return keep, skip
 
 
-def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None, block_ms=5000):
+def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None, block_ms=5000,
+              mode=None, listener=None, requests_from="$"):
+    """The service loop. `mode` is on_demand or all (default: GRANITE_MODE). With a
+    `max_loops` (tests) the request stream is polled once per loop instead of from a
+    thread, so a test can push a request and see it served; `requests_from` "0" also
+    serves requests written before the start (the service itself takes only new ones)."""
     import redis
     r = r or connect_redis()
     try:
@@ -391,10 +533,16 @@ def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None,
     consumer = socket.gethostname()
     stats = Stats()
     publisher = Publisher(r, stats)
+    mode = mode or granite_mode()
     backend = (granite.granite_backend() or ("custom" if granite_fn else "")) if use_granite else ""
-    print("case writer listening on '%s' (Granite: %s)" % (IN_STREAM, backend or "off"))
+    print("case writer listening on '%s' (Granite: %s%s)" % (
+        IN_STREAM, backend or "off", (", " + mode) if backend else ""))
     if use_granite and worker is None:
         worker = GraniteWorker(r, stats, granite_fn, publisher)
+    if use_granite and listener is None:
+        listener = RequestListener(r, publisher, worker, requests_from)
+        if max_loops is None:
+            listener.start()
 
     def handle(messages):
         keep, skip = coalesce(messages)
@@ -406,8 +554,9 @@ def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None,
             else:
                 try:
                     # the template first, at once; Granite replaces it when it passes the fact check
-                    if publisher.template_first(msg_id, fields, use_granite):
-                        worker.submit(fields, msg_id)
+                    priority = publisher.template_first(msg_id, fields, use_granite, mode)
+                    if priority is not None:
+                        worker.submit(fields, msg_id, priority)
                 except Exception as exc:
                     print("skipped bad ring message %s: %s" % (msg_id, exc), file=sys.stderr)
             r.xack(IN_STREAM, GROUP, msg_id)
@@ -430,6 +579,8 @@ def run_redis(use_granite, r=None, max_loops=None, granite_fn=None, worker=None,
         handle(messages)
         if messages:
             print(stats.line())
+        if listener is not None and max_loops is not None:
+            listener.poll()
     if worker is not None and max_loops is not None:
         worker.drain()
     return stats

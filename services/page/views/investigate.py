@@ -68,6 +68,9 @@ def investigation():
             ss["reviewed_ring"] = incoming
             st.rerun(scope="app")
     ui.case_bar(ring, snap)
+    # Granite starts writing while the investigator follows the money, so the
+    # explanation is usually ready by the time they reach the evidence step.
+    ui.ask_granite(snap, ring, ui.case_for(snap, ring))
     a, b, c = st.columns(3)
     a.metric("Connected accounts", len(ws.accounts(ring)))
     b.metric("Transfers in this case", len(ring.edges))

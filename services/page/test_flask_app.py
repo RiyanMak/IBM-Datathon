@@ -28,8 +28,8 @@ def ring_msg(ring_id="R-1", version=1, **over):
     return msg
 
 
-def case_msg(ring_id="R-1", version=1):
-    return {"ring_id": ring_id, "version": str(version), "source": "template", "check_note": "granite not used",
+def case_msg(ring_id="R-1", version=1, note="granite not used"):
+    return {"ring_id": ring_id, "version": str(version), "source": "template", "check_note": note,
             "written_at": "2026-10-17T20:00:00",
             "summary": json.dumps({"summary": "Three accounts moved $195.", "what_happened": "A paid B, B paid C."}),
             "facts": json.dumps({"ring_id": ring_id, "shape": "scatter-gather", "n_accounts": 3,
@@ -77,6 +77,20 @@ def test_ring_detail_has_picture_reasons_facts_and_case(client):
     assert d["case"]["source_label"] == "Template" and d["case"]["parts"][0]["text"].startswith("Three accounts")
     assert d["history"][0]["version"] == 1
     assert c.get("/api/ring/R-9").status_code == 404
+
+
+def test_ring_detail_asks_for_granite_and_reads_the_case_hash(client):
+    from services.page import flask_app
+    flask_app._granite_throttle.store.clear()   # the throttle is per process; earlier tests used R-1
+    c, r = client
+    r.xadd(bus.RINGS, ring_msg())
+    r.hset("case:R-1", mapping=case_msg(note="granite on request"))   # hash only: outside the window
+    d = c.get("/api/ring/R-1").get_json()
+    assert d["case"]["granite_writing"] and d["case"]["parts"]
+    requests = r.xrange(bus.GRANITE_REQUESTS)
+    assert len(requests) == 1 and requests[0][1]["requested_by"] == "flask"
+    c.get("/api/ring/R-1")
+    assert r.xlen(bus.GRANITE_REQUESTS) == 1   # throttled on refresh
 
 
 def test_decide_writes_the_stream_and_rejects_bad_input(client):
